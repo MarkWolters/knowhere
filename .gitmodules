@@ -1,0 +1,3 @@
+[submodule "thirdparty/jvector"]
+	path = thirdparty/jvector
+	url = https://github.com/jbellis/jvector.git

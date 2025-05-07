@@ -21,6 +21,8 @@ include(ExternalProject)
 include(cmake/utils/utils.cmake)
 include(cmake/utils/compile_flags.cmake)
 include(cmake/utils/platform_check.cmake)
+# Add jvector support
+include(cmake/jvector.cmake)
 
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
 if(WITH_CUVS)
