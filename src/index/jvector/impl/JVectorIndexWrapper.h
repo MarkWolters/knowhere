@@ -12,8 +12,9 @@
 #pragma once
 
 #include <faiss/cppcontrib/knowhere/IndexWrapper.h>
-#include <io.github.jbellis.jvector.graph.GraphIndex.h>
-#include <io.github.jbellis.jvector.graph.OnDiskGraphIndex.h>
+#include <jni.h>
+#include "io_github_jbellis_jvector_graph_GraphIndex.h"
+#include "io_github_jbellis_jvector_graph_OnDiskGraphIndex.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,7 +53,9 @@ struct JVectorIndexWrapper : public faiss::cppcontrib::knowhere::IndexWrapper {
                      const faiss::SearchParameters* params) const override;
 
 private:
-    std::unique_ptr<OnDiskGraphIndex> index_;
+    jobject index_;
+    JNIEnv* env_;
+    jclass index_class_;
 };
 
 }  // namespace knowhere

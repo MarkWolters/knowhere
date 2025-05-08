@@ -21,8 +21,6 @@ include(ExternalProject)
 include(cmake/utils/utils.cmake)
 include(cmake/utils/compile_flags.cmake)
 include(cmake/utils/platform_check.cmake)
-# Add jvector support
-include(cmake/jvector.cmake)
 
 knowhere_option(WITH_CUVS "Build with CUVS indexes" OFF)
 if(WITH_CUVS)
@@ -94,6 +92,20 @@ include_directories(thirdparty/faiss)
 find_package(Boost REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
 
+if(APPLE)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
+        set(OpenMP_C_LIB_NAMES "omp")
+        set(OpenMP_omp_LIBRARY "/opt/homebrew/opt/libomp/lib/libomp.dylib")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
+        set(OpenMP_CXX_LIB_NAMES "omp")
+        set(OpenMP_omp_LIBRARY "/opt/homebrew/opt/libomp/lib/libomp.dylib")
+    endif()
+    link_directories("/opt/homebrew/opt/libomp/lib")
+endif()
+
 find_package(OpenMP REQUIRED)
 
 find_package(folly REQUIRED)
@@ -142,6 +154,8 @@ if(WITH_LIGHT)
     KNOWHERE_SRCS
     src/common/*.cc
     src/index/ivf/ivf.cc
+    src/index/ivf/ivfrbq_wrapper.cc
+    src/index/refine/refine_utils.cc
     src/index/index_node_data_mock_wrapper.cc
     src/index/index_static.cc
     src/index/index.cc
@@ -218,6 +232,9 @@ if(WITH_CUVS)
 endif()
 target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
 target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Add jvector support
+include(cmake/jvector.cmake)
 
 if(WITH_UT)
   add_subdirectory(tests/ut)
