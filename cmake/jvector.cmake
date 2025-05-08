@@ -80,8 +80,8 @@ if(WITH_JVECTOR)
 
     # Get Maven dependencies
     execute_process(
-        COMMAND mvn -f ${JVECTOR_SOURCE_DIR}/jvector-base/pom.xml dependency:build-classpath -Dmdep.outputFile=classpath.txt
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMAND mvn dependency:build-classpath -Dmdep.outputFile=${CMAKE_BINARY_DIR}/classpath.txt
+        WORKING_DIRECTORY ${JVECTOR_SOURCE_DIR}/jvector-base
         RESULT_VARIABLE MVN_RESULT
         ERROR_VARIABLE MVN_ERROR
     )
