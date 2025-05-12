@@ -13,6 +13,7 @@ constexpr char kGraphIndexClass[] = "io/github/jbellis/jvector/graph/GraphIndex"
 constexpr char kGraphIndexBuilderClass[] = "io/github/jbellis/jvector/graph/GraphIndexBuilder";
 constexpr char kVectorSimFuncClass[] = "io/github/jbellis/jvector/vector/VectorSimilarityFunction";
 constexpr char kArrayVectorFloatClass[] = "io/github/jbellis/jvector/vector/ArrayVectorFloat";
+constexpr char kSearchResultClass[] = "io/github/jbellis/jvector/graph/SearchResult";
 
 // Cache for commonly used class references and method IDs
 struct {
@@ -21,6 +22,7 @@ struct {
     jclass graph_index_builder_class;
     jclass vector_sim_func_class;
     jclass array_vector_float_class;
+    jclass search_result_class;
     
     // GraphIndexBuilder methods
     jmethodID builder_constructor;
@@ -95,6 +97,14 @@ Status LoadJVectorClasses(JNIEnv* env) {
     }
     g_jni_cache.array_vector_float_class = (jclass)env->NewGlobalRef(local_vector_class);
     env->DeleteLocalRef(local_vector_class);
+
+    // Load SearchResult class
+    jclass local_search_result_class = env->FindClass(kSearchResultClass);
+    if (local_search_result_class == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to find SearchResult class");
+    }
+    g_jni_cache.search_result_class = (jclass)env->NewGlobalRef(local_search_result_class);
+    env->DeleteLocalRef(local_search_result_class);
 
     // Get GraphIndexBuilder method IDs
     g_jni_cache.builder_constructor = env->GetMethodID(g_jni_cache.graph_index_builder_class, "<init>", 
@@ -242,90 +252,71 @@ Status AddVectors(JNIEnv* env, jobject builder_obj, const float* vectors, int64_
         }
     }
 
-    env->DeleteLocalRef(vector_array);
-    return Status::OK();
-}
 
 Status SearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
-                    int64_t k, float* distances, int64_t* labels, int ef_search) {
+                    int64_t k, float* distances, int64_t* labels, int ef_search, const BitsetView& bitset) {
     if (env == nullptr || index_obj == nullptr || query_vectors == nullptr ||
-        distances == nullptr || labels == nullptr) {
+        distances == nullptr || labels == nullptr || k <= 0 || ef_search <= 0) {
         return Status(Status::Code::Invalid, "Invalid input parameters");
     }
 
-    // Set search parameters
-    jclass index_class = env->GetObjectClass(index_obj);
-    jmethodID set_ef = env->GetMethodID(index_class, "setEf", "(I)V");
-    if (set_ef != nullptr) {
-        env->CallVoidMethod(index_obj, set_ef, ef_search);
-        if (env->ExceptionCheck()) {
-            env->DeleteLocalRef(index_class);
-            return CheckJavaException(env);
-        }
+    // Get the GraphIndex class
+    jclass graph_index_class = g_jni_cache.graph_index_class;
+    if (graph_index_class == nullptr) {
+        return Status(Status::Code::Invalid, "GraphIndex class not found");
     }
 
-    // Create query vector array
-    jfloatArray query_array = env->NewFloatArray(dim_);
+    // Create float array for query vectors
+    int64_t total_floats = num_queries * g_jni_cache.dim;
+    jfloatArray query_array = env->NewFloatArray(total_floats);
     if (query_array == nullptr) {
-        env->DeleteLocalRef(index_class);
         return Status(Status::Code::Invalid, "Failed to create query array");
     }
+    env->SetFloatArrayRegion(query_array, 0, total_floats, query_vectors);
 
-    // Process each query vector
-    for (int64_t i = 0; i < num_queries; i++) {
-        // Copy query vector to Java array
-        env->SetFloatArrayRegion(query_array, 0, dim_, query_vectors + i * dim_);
-
-        // Create ArrayVectorFloat for query
-        jobject query_vector = env->NewObject(g_jni_cache.array_vector_float_class,
-            g_jni_cache.vector_constructor, query_array);
-        if (query_vector == nullptr) {
+    // Create boolean array for bitset if it's not empty
+    jbooleanArray bitset_array = nullptr;
+    if (!bitset.empty()) {
+        bitset_array = env->NewBooleanArray(bitset.size());
+        if (bitset_array == nullptr) {
             env->DeleteLocalRef(query_array);
-            env->DeleteLocalRef(index_class);
-            return Status(Status::Code::Invalid, "Failed to create query vector");
+            return Status(Status::Code::Invalid, "Failed to create bitset array");
         }
 
-        // Call search method
-        jobjectArray results = (jobjectArray)env->CallObjectMethod(index_obj,
-            g_jni_cache.search_method, query_vector, (jint)k);
-        if (results == nullptr || env->ExceptionCheck()) {
-            env->DeleteLocalRef(query_vector);
-            env->DeleteLocalRef(query_array);
-            env->DeleteLocalRef(index_class);
-            return CheckJavaException(env);
+        // Convert bitset to boolean array
+        std::vector<jboolean> bool_values(bitset.size());
+        for (size_t i = 0; i < bitset.size(); i++) {
+            bool_values[i] = !bitset.test(i);  // Invert because in JVector true means valid
         }
-
-        // Process search results
-        jsize num_results = env->GetArrayLength(results);
-        for (jsize j = 0; j < num_results && j < k; j++) {
-            // Get SearchResult object
-            jobject result = env->GetObjectArrayElement(results, j);
-            if (result == nullptr) continue;
-
-            // Get node ID and distance
-            jclass result_class = env->GetObjectClass(result);
-            jfieldID node_field = env->GetFieldID(result_class, "node", "I");
-            jfieldID dist_field = env->GetFieldID(result_class, "distance", "F");
-
-            if (node_field != nullptr && dist_field != nullptr) {
-                jint node_id = env->GetIntField(result, node_field);
-                jfloat distance = env->GetFloatField(result, dist_field);
-
-                // Store results
-                labels[i * k + j] = node_id;
-                distances[i * k + j] = distance;
-            }
-
-            env->DeleteLocalRef(result_class);
-            env->DeleteLocalRef(result);
-        }
-
-        env->DeleteLocalRef(results);
-        env->DeleteLocalRef(query_vector);
+        env->SetBooleanArrayRegion(bitset_array, 0, bitset.size(), bool_values.data());
     }
 
+    // Call search method with bitset
+    jobject results = env->CallObjectMethod(index_obj, g_jni_cache.search_method,
+                                          query_array, k, ef_search, bitset_array);
+    if (results == nullptr) {
+        env->DeleteLocalRef(query_array);
+        if (bitset_array != nullptr) env->DeleteLocalRef(bitset_array);
+        return Status(Status::Code::Invalid, "Search failed");
+    }
+
+    // Get the results arrays
+    jfieldID distances_field = env->GetFieldID(g_jni_cache.search_result_class, "distances", "[F");
+    jfieldID labels_field = env->GetFieldID(g_jni_cache.search_result_class, "labels", "[J");
+
+    jfloatArray distances_array = (jfloatArray)env->GetObjectField(results, distances_field);
+    jlongArray labels_array = (jlongArray)env->GetObjectField(results, labels_field);
+
+    // Copy results back to C++ arrays
+    env->GetFloatArrayRegion(distances_array, 0, num_queries * k, distances);
+    env->GetLongArrayRegion(labels_array, 0, num_queries * k, (jlong*)labels);
+
+    // Clean up local references
     env->DeleteLocalRef(query_array);
-    env->DeleteLocalRef(index_class);
+    if (bitset_array != nullptr) env->DeleteLocalRef(bitset_array);
+    env->DeleteLocalRef(distances_array);
+    env->DeleteLocalRef(labels_array);
+    env->DeleteLocalRef(results);
 
     return Status::OK();
 }

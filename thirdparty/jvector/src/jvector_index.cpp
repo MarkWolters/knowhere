@@ -224,9 +224,46 @@ JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, SearchResult& 
 }
 
 expected<DataSetPtr>
-JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, const BitsetView& bitset) const {
-    // TODO: Implement search logic using JNI
-    return expected<DataSetPtr>();
+JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, const BitsetView& bitset) {
+    if (!dataset || dataset->GetRows() == 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Empty dataset");
+    }
+
+    if (dataset->GetDim() != dim_) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Dimension mismatch");
+    }
+
+    int64_t k = json["k"].get<int64_t>();
+    int ef_search = json["ef_search"].get<int>();
+
+    if (k <= 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid k");
+    }
+
+    if (ef_search <= 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid ef_search");
+    }
+
+    int64_t num_queries = dataset->GetRows();
+    auto results = std::make_shared<DataSet>();
+    results->SetRows(num_queries);
+    results->SetDim(k);
+
+    auto distances = new float[num_queries * k];
+    auto labels = new int64_t[num_queries * k];
+
+    auto status = jvector::SearchVectors(jvm_env_, index_obj_, dataset->GetTensor(), num_queries,
+                                        k, distances, labels, ef_search, bitset);
+    if (!status.ok()) {
+        delete[] distances;
+        delete[] labels;
+        return expected<DataSetPtr>::Err(status);
+    }
+
+    results->SetDistance(distances);
+    results->SetLabels(labels);
+
+    return expected<DataSetPtr>::Ok(results);
 }
 
 expected<DataSetPtr>
