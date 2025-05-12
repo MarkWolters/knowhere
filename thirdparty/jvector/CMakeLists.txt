@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 project(knowhere_jvector)
 
+# Download JVector JAR if not exists
+set(JVECTOR_VERSION "1.0.0")
+set(JVECTOR_JAR_NAME "jvector-${JVECTOR_VERSION}.jar")
+set(JVECTOR_JAR_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/${JVECTOR_JAR_NAME}")
+
+if(NOT EXISTS ${JVECTOR_JAR_PATH})
+    message(STATUS "Downloading JVector JAR...")
+    file(DOWNLOAD
+        "https://github.com/jbellis/jvector/releases/download/v${JVECTOR_VERSION}/${JVECTOR_JAR_NAME}"
+        ${JVECTOR_JAR_PATH}
+        SHOW_PROGRESS
+    )
+endif()
+
 # Find JNI
 find_package(JNI REQUIRED)
 include_directories(${JNI_INCLUDE_DIRS})
@@ -58,6 +72,7 @@ endif()
 target_compile_definitions(knowhere_jvector
     PRIVATE
         KNOWHERE_JVECTOR_PATH="${KNOWHERE_JVECTOR_PATH}"
+        JVECTOR_JAR_PATH="${JVECTOR_JAR_PATH}"
 )
 
 # Link with JNI
