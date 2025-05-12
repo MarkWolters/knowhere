@@ -73,13 +73,28 @@ check_cmake() {
     print_status "Found CMake version: $cmake_version"
 }
 
+# Verify Folly installation
+verify_folly() {
+    if ! pkg-config --exists libfolly; then
+        print_error "Folly library not found or not properly installed."
+        print_error "Please ensure all dependencies are installed and pkg-config is properly configured."
+        exit 1
+    fi
+    print_status "Found Folly: $(pkg-config --modversion libfolly)"
+}
+
 # Check system dependencies
 check_system_deps() {
     local os_id=$(cat /etc/os-release | grep ^ID= | cut -d= -f2)
     
     case $os_id in
         "ubuntu")
-            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev" "libboost-all-dev")
+            # Basic build tools and math libraries
+            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev" "libboost-all-dev"
+                      # Folly dependencies
+                      "libssl-dev" "libgflags-dev" "libgoogle-glog-dev" "libdouble-conversion-dev"
+                      "libfmt-dev" "libfolly-dev" "libevent-dev" "libsnappy-dev" "zlib1g-dev"
+                      "liblz4-dev" "liblzma-dev" "libzstd-dev" "libbz2-dev" "libsodium-dev")
             local missing_deps=()
             
             for pkg in "${deps[@]}"; do
@@ -210,6 +225,9 @@ main() {
     
     # Check system dependencies
     check_system_deps
+    
+    # Verify Folly installation
+    verify_folly
     
     # Check environment
     check_env
