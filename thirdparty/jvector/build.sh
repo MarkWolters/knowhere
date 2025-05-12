@@ -73,6 +73,40 @@ check_cmake() {
     print_status "Found CMake version: $cmake_version"
 }
 
+# Check system dependencies
+check_system_deps() {
+    local os_id=$(cat /etc/os-release | grep ^ID= | cut -d= -f2)
+    
+    case $os_id in
+        "ubuntu")
+            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev")
+            local missing_deps=()
+            
+            for pkg in "${deps[@]}"; do
+                if ! dpkg -l "$pkg" &> /dev/null; then
+                    missing_deps+=("$pkg")
+                fi
+            done
+            
+            if [ ${#missing_deps[@]} -gt 0 ]; then
+                print_warning "Missing required system dependencies: ${missing_deps[*]}"
+                print_warning "Installing missing dependencies..."
+                if [ "$EUID" -ne 0 ]; then
+                    print_error "Please run with sudo to install dependencies:"
+                    print_error "sudo apt-get update && sudo apt-get install -y ${missing_deps[*]}"
+                    exit 1
+                else
+                    apt-get update
+                    apt-get install -y "${missing_deps[@]}"
+                fi
+            fi
+            ;;
+        *)
+            print_warning "Unsupported OS: $os_id. Please install BLAS, LAPACK, and OpenBLAS manually."
+            ;;
+    esac
+}
+
 # Check C++ compiler version
 check_cpp() {
     if ! command -v g++ &> /dev/null; then
@@ -173,6 +207,9 @@ main() {
     check_java
     check_cmake
     check_cpp
+    
+    # Check system dependencies
+    check_system_deps
     
     # Check environment
     check_env
