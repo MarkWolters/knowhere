@@ -224,39 +224,51 @@ build() {
     print_status "Build type: $build_type"
     print_status "Using $jobs parallel jobs"
 
-    # Get Knowhere root directory
+    # Get directory paths
     local script_dir=$(dirname "$(readlink -f "$0")")
     local knowhere_root=$(dirname "$(dirname "$script_dir")")
+    local current_dir=$(pwd)
+    
     print_status "Knowhere root: $knowhere_root"
 
     # First build Knowhere
     print_status "Building Knowhere..."
     cd "$knowhere_root"
-    mkdir -p build && cd build
-    cmake .. \
+    mkdir -p build
+    cd build
+    
+    # Configure Knowhere
+    cmake "$knowhere_root" \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DMILVUS_USE_JVECTOR=ON \
         -DKNOWHERE_BUILD_TESTS=ON
+    # Build Knowhere
     make -j$jobs
-
+    
     # Now build JVector
     print_status "Building JVector..."
     cd "$script_dir"
-    mkdir -p build && cd build
-    cmake .. \
+    mkdir -p build
+    cd build
+    
+    # Configure JVector
+    cmake "$script_dir" \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DKNOWHERE_ROOT="$knowhere_root" \
         -DKNOWHERE_BUILD_TESTS=ON
-
-    # Build
+    
+    # Build JVector
     make -j$jobs
-
+    
     # Run tests if enabled
     if [ "$KNOWHERE_BUILD_TESTS" = "ON" ]; then
         print_status "Running tests..."
         ctest --output-on-failure
     fi
-
+    
+    # Return to original directory
+    cd "$current_dir"
+    
     print_status "Build completed successfully!"
 }
 
