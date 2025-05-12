@@ -728,9 +728,88 @@ JVectorIndex::InitJVM() {
 }
 
 Status
+JVectorIndex::ValidateConfig(const Json& config) const {
+    // Required parameters
+    if (!config.contains("dim")) {
+        LOG_ERROR_ << "Missing dimension parameter";
+        return Status(Status::Code::Invalid, "Missing dimension parameter");
+    }
+
+    // Validate dimension
+    int dim = config["dim"].get<int>();
+    if (dim <= 0) {
+        LOG_ERROR_ << "Invalid dimension: " << dim;
+        return Status(Status::Code::Invalid, "Invalid dimension");
+    }
+
+    // Validate metric type
+    std::string metric_type = "L2";  // Default to L2
+    if (config.contains("metric_type")) {
+        metric_type = config["metric_type"].get<std::string>();
+        if (metric_type != "L2" && metric_type != "IP" && metric_type != "COSINE") {
+            LOG_ERROR_ << "Invalid metric type: " << metric_type;
+            return Status(Status::Code::Invalid, "Invalid metric type");
+        }
+    }
+
+    // Validate M (max connections)
+    if (config.contains(indexparam::JVECTOR_M)) {
+        int M = config[indexparam::JVECTOR_M].get<int>();
+        if (M <= 0) {
+            LOG_ERROR_ << "Invalid M value: " << M;
+            return Status(Status::Code::Invalid, "Invalid M value");
+        }
+    }
+
+    // Validate ef_construction
+    if (config.contains(indexparam::JVECTOR_EF_CONSTRUCTION)) {
+        int ef_construction = config[indexparam::JVECTOR_EF_CONSTRUCTION].get<int>();
+        if (ef_construction <= 0) {
+            LOG_ERROR_ << "Invalid ef_construction value: " << ef_construction;
+            return Status(Status::Code::Invalid, "Invalid ef_construction value");
+        }
+    }
+
+    // Validate ef_search
+    if (config.contains(indexparam::JVECTOR_EF_SEARCH)) {
+        int ef_search = config[indexparam::JVECTOR_EF_SEARCH].get<int>();
+        if (ef_search <= 0) {
+            LOG_ERROR_ << "Invalid ef_search value: " << ef_search;
+            return Status(Status::Code::Invalid, "Invalid ef_search value");
+        }
+    }
+
+    // Validate beam_width
+    if (config.contains(indexparam::JVECTOR_BEAM_WIDTH)) {
+        int beam_width = config[indexparam::JVECTOR_BEAM_WIDTH].get<int>();
+        if (beam_width <= 0) {
+            LOG_ERROR_ << "Invalid beam_width value: " << beam_width;
+            return Status(Status::Code::Invalid, "Invalid beam_width value");
+        }
+    }
+
+    // Validate queue_size
+    if (config.contains(indexparam::JVECTOR_QUEUE_SIZE)) {
+        int queue_size = config[indexparam::JVECTOR_QUEUE_SIZE].get<int>();
+        if (queue_size <= 0) {
+            LOG_ERROR_ << "Invalid queue_size value: " << queue_size;
+            return Status(Status::Code::Invalid, "Invalid queue_size value");
+        }
+    }
+
+    return Status::OK();
+}
+
+Status
 JVectorIndex::CreateJVectorIndex(const Json& config) {
     if (jvm_ == nullptr) {
         return Status(Status::Code::Invalid, "JVM not initialized");
+    }
+
+    // Validate configuration
+    auto status = ValidateConfig(config);
+    if (!status.ok()) {
+        return status;
     }
 
     JNIEnv* env;
