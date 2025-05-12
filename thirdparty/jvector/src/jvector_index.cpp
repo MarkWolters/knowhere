@@ -57,13 +57,115 @@ JVectorIndex::Build(const DataSetPtr& dataset, const Json& json, bool use_knowhe
         return status;
     }
 
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Validate dataset
+    if (!dataset || dataset->GetTensor() == nullptr) {
+        return Status(Status::Code::Invalid, "Empty dataset");
+    }
+
+    auto rows = dataset->GetRows();
+    if (rows == 0) {
+        return Status(Status::Code::Invalid, "Empty dataset");
+    }
+
+    auto tensor = dataset->GetTensor();
+    if (tensor->GetDim() != dim_) {
+        return Status(Status::Code::Invalid, "Dimension mismatch");
+    }
+
     // Create JVector index with configuration
     status = CreateJVectorIndex(json);
     if (!status.ok()) {
         return status;
     }
 
-    // TODO: Implement build logic using JNI
+    // Create a builder for adding vectors
+    jobject sim_func = nullptr;
+    jfieldID field_id = nullptr;
+
+    // Get similarity function based on metric type
+    if (metric_type_ == "L2") {
+        field_id = env->GetStaticFieldID(g_jni_cache.vector_sim_func_class, "EUCLIDEAN", 
+            "Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;");
+    } else if (metric_type_ == "IP") {
+        field_id = env->GetStaticFieldID(g_jni_cache.vector_sim_func_class, "DOT_PRODUCT", 
+            "Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;");
+    } else if (metric_type_ == "COSINE") {
+        field_id = env->GetStaticFieldID(g_jni_cache.vector_sim_func_class, "COSINE", 
+            "Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;");
+    }
+
+    if (field_id == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get similarity function field");
+    }
+
+    sim_func = env->GetStaticObjectField(g_jni_cache.vector_sim_func_class, field_id);
+    if (sim_func == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get similarity function instance");
+    }
+
+    // Create builder
+    jobject builder = env->NewObject(g_jni_cache.graph_index_builder_class, g_jni_cache.builder_constructor, 
+        sim_func, dim_);
+    if (builder == nullptr) {
+        env->DeleteLocalRef(sim_func);
+        return Status(Status::Code::Invalid, "Failed to create GraphIndexBuilder");
+    }
+
+    // Configure builder parameters
+    jclass builder_class = env->GetObjectClass(builder);
+    
+    // Set M (max connections per node)
+    if (json.contains("M")) {
+        jmethodID set_m = env->GetMethodID(builder_class, "setM", "(I)Lio/github/jbellis/jvector/graph/GraphIndexBuilder;");
+        if (set_m != nullptr) {
+            env->CallObjectMethod(builder, set_m, json["M"].get<int>());
+        }
+    }
+
+    // Set ef_construction
+    if (json.contains("efConstruction")) {
+        jmethodID set_ef = env->GetMethodID(builder_class, "setEfConstruction", "(I)Lio/github/jbellis/jvector/graph/GraphIndexBuilder;");
+        if (set_ef != nullptr) {
+            env->CallObjectMethod(builder, set_ef, json["efConstruction"].get<int>());
+        }
+    }
+
+    // Add vectors to builder
+    status = jvector::AddVectors(env, builder, reinterpret_cast<const float*>(tensor->GetData()), rows, dim_);
+    if (!status.ok()) {
+        env->DeleteLocalRef(builder);
+        env->DeleteLocalRef(sim_func);
+        env->DeleteLocalRef(builder_class);
+        return status;
+    }
+
+    // Build index
+    jobject index = env->CallObjectMethod(builder, g_jni_cache.builder_build);
+    if (index == nullptr) {
+        env->DeleteLocalRef(builder);
+        env->DeleteLocalRef(sim_func);
+        env->DeleteLocalRef(builder_class);
+        return Status(Status::Code::Invalid, "Failed to build index");
+    }
+
+    // Update index object
+    if (index_object_ != nullptr) {
+        env->DeleteGlobalRef(index_object_);
+    }
+    index_object_ = env->NewGlobalRef(index);
+    size_ = rows;
+
+    // Clean up local references
+    env->DeleteLocalRef(index);
+    env->DeleteLocalRef(builder);
+    env->DeleteLocalRef(sim_func);
+    env->DeleteLocalRef(builder_class);
+
     return Status::OK();
 }
 
@@ -77,6 +179,48 @@ Status
 JVectorIndex::Add(const DataSetPtr& dataset, const Json& json, bool use_knowhere_build_pool) {
     // TODO: Implement add logic using JNI
     return Status::OK();
+}
+
+Status
+JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, SearchResult& results,
+                   bool use_knowhere_search_pool) {
+    if (jvm_ == nullptr || index_object_ == nullptr) {
+        return Status(Status::Code::Invalid, "JVM or index not initialized");
+    }
+
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Validate dataset
+    if (!dataset || dataset->GetTensor() == nullptr) {
+        return Status(Status::Code::Invalid, "Empty dataset");
+    }
+
+    auto rows = dataset->GetRows();
+    if (rows == 0) {
+        return Status(Status::Code::Invalid, "Empty dataset");
+    }
+
+    auto tensor = dataset->GetTensor();
+    if (tensor->GetDim() != dim_) {
+        return Status(Status::Code::Invalid, "Dimension mismatch");
+    }
+
+    // Get search parameters
+    int64_t k = json["k"].get<int64_t>();
+    int ef_search = json.value("ef_search", k * 2);  // Default ef_search to 2*k
+
+    // Allocate memory for results
+    results.distances_.resize(rows * k);
+    results.labels_.resize(rows * k);
+
+    // Perform search
+    return jvector::SearchVectors(env, index_object_,
+        reinterpret_cast<const float*>(tensor->GetData()),
+        rows, k, results.distances_.data(), results.labels_.data(),
+        ef_search);
 }
 
 expected<DataSetPtr>

@@ -221,14 +221,112 @@ Status CreateGraphIndex(JNIEnv* env, jobject* index_obj, const std::string& metr
     return Status::OK();
 }
 
-Status AddVectors(JNIEnv* env, jobject index_obj, const float* vectors, int64_t num_vectors) {
-    // TODO: Implement vector addition
+Status AddVectors(JNIEnv* env, jobject builder_obj, const float* vectors, int64_t num_vectors, int dim) {
+    // Create a float array for each vector and add it to the builder
+    jfloatArray vector_array = env->NewFloatArray(dim);
+    if (vector_array == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to create float array");
+    }
+
+    for (int64_t i = 0; i < num_vectors; i++) {
+        // Copy vector data to Java array
+        env->SetFloatArrayRegion(vector_array, 0, dim, vectors + i * dim);
+
+        // Add vector to builder
+        env->CallVoidMethod(builder_obj, g_jni_cache.builder_add_vector, vector_array);
+        
+        // Check for exceptions
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(vector_array);
+            return CheckJavaException(env);
+        }
+    }
+
+    env->DeleteLocalRef(vector_array);
     return Status::OK();
 }
 
 Status SearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
-                    int64_t k, float* distances, int64_t* labels) {
-    // TODO: Implement vector search
+                    int64_t k, float* distances, int64_t* labels, int ef_search) {
+    if (env == nullptr || index_obj == nullptr || query_vectors == nullptr ||
+        distances == nullptr || labels == nullptr) {
+        return Status(Status::Code::Invalid, "Invalid input parameters");
+    }
+
+    // Set search parameters
+    jclass index_class = env->GetObjectClass(index_obj);
+    jmethodID set_ef = env->GetMethodID(index_class, "setEf", "(I)V");
+    if (set_ef != nullptr) {
+        env->CallVoidMethod(index_obj, set_ef, ef_search);
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(index_class);
+            return CheckJavaException(env);
+        }
+    }
+
+    // Create query vector array
+    jfloatArray query_array = env->NewFloatArray(dim_);
+    if (query_array == nullptr) {
+        env->DeleteLocalRef(index_class);
+        return Status(Status::Code::Invalid, "Failed to create query array");
+    }
+
+    // Process each query vector
+    for (int64_t i = 0; i < num_queries; i++) {
+        // Copy query vector to Java array
+        env->SetFloatArrayRegion(query_array, 0, dim_, query_vectors + i * dim_);
+
+        // Create ArrayVectorFloat for query
+        jobject query_vector = env->NewObject(g_jni_cache.array_vector_float_class,
+            g_jni_cache.vector_constructor, query_array);
+        if (query_vector == nullptr) {
+            env->DeleteLocalRef(query_array);
+            env->DeleteLocalRef(index_class);
+            return Status(Status::Code::Invalid, "Failed to create query vector");
+        }
+
+        // Call search method
+        jobjectArray results = (jobjectArray)env->CallObjectMethod(index_obj,
+            g_jni_cache.search_method, query_vector, (jint)k);
+        if (results == nullptr || env->ExceptionCheck()) {
+            env->DeleteLocalRef(query_vector);
+            env->DeleteLocalRef(query_array);
+            env->DeleteLocalRef(index_class);
+            return CheckJavaException(env);
+        }
+
+        // Process search results
+        jsize num_results = env->GetArrayLength(results);
+        for (jsize j = 0; j < num_results && j < k; j++) {
+            // Get SearchResult object
+            jobject result = env->GetObjectArrayElement(results, j);
+            if (result == nullptr) continue;
+
+            // Get node ID and distance
+            jclass result_class = env->GetObjectClass(result);
+            jfieldID node_field = env->GetFieldID(result_class, "node", "I");
+            jfieldID dist_field = env->GetFieldID(result_class, "distance", "F");
+
+            if (node_field != nullptr && dist_field != nullptr) {
+                jint node_id = env->GetIntField(result, node_field);
+                jfloat distance = env->GetFloatField(result, dist_field);
+
+                // Store results
+                labels[i * k + j] = node_id;
+                distances[i * k + j] = distance;
+            }
+
+            env->DeleteLocalRef(result_class);
+            env->DeleteLocalRef(result);
+        }
+
+        env->DeleteLocalRef(results);
+        env->DeleteLocalRef(query_vector);
+    }
+
+    env->DeleteLocalRef(query_array);
+    env->DeleteLocalRef(index_class);
+
     return Status::OK();
 }
 

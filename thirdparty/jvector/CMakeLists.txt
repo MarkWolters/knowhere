@@ -24,6 +24,36 @@ target_include_directories(knowhere_jvector
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# Add shared library
+add_library(jvector SHARED
+    src/jvector_index.cpp
+    src/jvector_jni.cpp
+)
+
+target_include_directories(jvector PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${JNI_INCLUDE_DIRS}
+)
+
+target_link_libraries(jvector PUBLIC
+    ${JNI_LIBRARIES}
+    knowhere
+)
+
+# Add test executable
+if(KNOWHERE_BUILD_TESTS)
+    add_executable(test_jvector
+        test/test_jvector_index.cpp
+    )
+
+    target_link_libraries(test_jvector PRIVATE
+        jvector
+        catch2
+    )
+
+    add_test(NAME test_jvector COMMAND test_jvector)
+endif()
+
 # Add compile definitions
 target_compile_definitions(knowhere_jvector
     PRIVATE
