@@ -1,8 +1,46 @@
 #include "jvector_index.h"
 #include "knowhere/log.h"
+#include "jvector_jni.h"
+#include "knowhere/index/index_factory.h"
+#include "knowhere/comp/index_param.h"
 
 namespace knowhere {
-namespace jvector {
+
+// Register JVector index types with the factory
+void RegisterJVectorIndex() {
+    // Register for float32
+    IndexFactory::Instance().Register<fp32>(
+        IndexEnum::INDEX_JVECTOR,
+        [](const int32_t& version, const Object& object) {
+            return std::make_shared<JVectorIndex>(version);
+        },
+        0  // No special features for now
+    );
+
+    // Register for float16
+    IndexFactory::Instance().Register<fp16>(
+        IndexEnum::INDEX_JVECTOR,
+        [](const int32_t& version, const Object& object) {
+            return std::make_shared<JVectorIndex>(version);
+        },
+        0
+    );
+
+    // Register for bfloat16
+    IndexFactory::Instance().Register<bf16>(
+        IndexEnum::INDEX_JVECTOR,
+        [](const int32_t& version, const Object& object) {
+            return std::make_shared<JVectorIndex>(version);
+        },
+        0
+    );
+}
+
+// Register index types when this file is loaded
+static bool jvector_index_registered = []() {
+    RegisterJVectorIndex();
+    return true;
+}();
 
 JVectorIndex::JVectorIndex(const int32_t& version) : IndexNode(version), jvm_(nullptr), index_object_(nullptr), index_class_(nullptr), dim_(0), size_(0) {
 }
@@ -141,5 +179,4 @@ JVectorIndex::DestroyJVectorIndex() {
     return Status::OK();
 }
 
-} // namespace jvector
-} // namespace knowhere
+}  // namespace knowhere
