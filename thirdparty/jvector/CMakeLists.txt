@@ -77,11 +77,16 @@ add_library(knowhere_jvector STATIC ${JVECTOR_SRC})
 # Define JVector path
 set(KNOWHERE_JVECTOR_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Get Knowhere root directory
+get_filename_component(KNOWHERE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../ ABSOLUTE)
+
 # Include directories
 target_include_directories(knowhere_jvector
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${KNOWHERE_ROOT}/include
+        ${KNOWHERE_ROOT}/src
 )
 
 # Add shared library
@@ -93,6 +98,8 @@ add_library(jvector SHARED
 target_include_directories(jvector PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${JNI_INCLUDE_DIRS}
+    ${KNOWHERE_ROOT}/include
+    ${KNOWHERE_ROOT}/src
 )
 
 target_link_libraries(jvector PUBLIC

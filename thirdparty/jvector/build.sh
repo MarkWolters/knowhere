@@ -123,11 +123,28 @@ build() {
     print_status "Build type: $build_type"
     print_status "Using $jobs parallel jobs"
 
-    # Configure with CMake
-    cd build
+    # Get Knowhere root directory
+    local script_dir=$(dirname "$(readlink -f "$0")")
+    local knowhere_root=$(dirname "$(dirname "$script_dir")")
+    print_status "Knowhere root: $knowhere_root"
+
+    # First build Knowhere
+    print_status "Building Knowhere..."
+    cd "$knowhere_root"
+    mkdir -p build && cd build
     cmake .. \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DMILVUS_USE_JVECTOR=ON \
+        -DKNOWHERE_BUILD_TESTS=ON
+    make -j$jobs
+
+    # Now build JVector
+    print_status "Building JVector..."
+    cd "$script_dir"
+    mkdir -p build && cd build
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=$build_type \
+        -DKNOWHERE_ROOT="$knowhere_root" \
         -DKNOWHERE_BUILD_TESTS=ON
 
     # Build
