@@ -120,20 +120,40 @@ verify_folly() {
 }
 
 # Check system dependencies
-# Setup repositories
-setup_repos() {
+# Install build dependencies
+install_build_deps() {
     if [ "$EUID" -ne 0 ]; then
-        print_error "Please run with sudo to setup repositories"
+        print_error "Please run with sudo to install build dependencies"
         exit 1
     fi
 
-    # Add Facebook repository
-    if [ ! -f /etc/apt/sources.list.d/facebook.list ]; then
-        print_status "Adding Facebook repository..."
-        wget -q https://download.opensuse.org/repositories/home:facebook/xUbuntu_22.04/Release.key -O- | apt-key add -
-        echo "deb https://download.opensuse.org/repositories/home:facebook/xUbuntu_22.04/ ./" > /etc/apt/sources.list.d/facebook.list
-        apt-get update
-    fi
+    print_status "Installing build dependencies..."
+    apt-get update
+    apt-get install -y \
+        build-essential \
+        cmake \
+        libboost-all-dev \
+        libblas-dev \
+        liblapack-dev \
+        libopenblas-dev \
+        libssl-dev \
+        libgflags-dev \
+        libgoogle-glog-dev \
+        libdouble-conversion-dev \
+        libevent-dev \
+        libsnappy-dev \
+        zlib1g-dev \
+        liblz4-dev \
+        liblzma-dev \
+        libzstd-dev \
+        libbz2-dev \
+        libsodium-dev \
+        libfmt-dev \
+        pkg-config \
+        git \
+        ca-certificates \
+        curl \
+        wget
 }
 
 check_system_deps() {
@@ -141,40 +161,15 @@ check_system_deps() {
     
     case $os_id in
         "ubuntu")
-            # Setup repositories first
-            setup_repos
-
-            # Basic build tools and math libraries
-            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev" "libboost-all-dev"
-                      # Folly dependencies
-                      "libssl-dev" "libgflags-dev" "libgoogle-glog-dev" "libdouble-conversion-dev"
-                      "libfmt-dev" "libfolly-dev" "libevent-dev" "libsnappy-dev" "zlib1g-dev"
-                      "liblz4-dev" "liblzma-dev" "libzstd-dev" "libbz2-dev" "libsodium-dev"
-                      # Additional Facebook packages
-                      "libfolly-dev" "libfizz-dev" "libwangle-dev" "libfmt-dev")
-            local missing_deps=()
+            # Install build dependencies
+            install_build_deps
             
-            for pkg in "${deps[@]}"; do
-                if ! dpkg -l "$pkg" &> /dev/null; then
-                    missing_deps+=("$pkg")
-                fi
-            done
-            
-            if [ ${#missing_deps[@]} -gt 0 ]; then
-                print_warning "Missing required system dependencies: ${missing_deps[*]}"
-                print_warning "Installing missing dependencies..."
-                if [ "$EUID" -ne 0 ]; then
-                    print_error "Please run with sudo to install dependencies:"
-                    print_error "sudo apt-get update && sudo apt-get install -y ${missing_deps[*]}"
-                    exit 1
-                else
-                    apt-get update
-                    apt-get install -y "${missing_deps[@]}"
-                fi
-            fi
+            # Build Folly from source
+            build_folly_from_source
             ;;
         *)
-            print_warning "Unsupported OS: $os_id. Please install BLAS, LAPACK, and OpenBLAS manually."
+            print_error "Unsupported OS: $os_id. This script currently only supports Ubuntu."
+            exit 1
             ;;
     esac
 }
