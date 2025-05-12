@@ -224,10 +224,36 @@ build() {
     print_status "Build type: $build_type"
     print_status "Using $jobs parallel jobs"
 
+    # Debug: Print initial directory
+    print_status "Current directory: $(pwd)"
+    print_status "Script location: $0"
+
+    # Get absolute path of the script
+    local script_path="$0"
+    if [[ "$script_path" != /* ]]; then
+        script_path="$(pwd)/$script_path"
+    fi
+    
     # Get directory paths
-    local script_dir=$(cd "$(dirname "$0")" && pwd)
-    local knowhere_root=$(cd "$script_dir/../.." && pwd)
-    local current_dir=$(pwd)
+    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+    if [ $? -ne 0 ]; then
+        print_error "Failed to resolve script directory"
+        exit 1
+    fi
+
+    # Store current directory
+    local current_dir="$(pwd)"
+
+    # Resolve knowhere root
+    cd "$script_dir" || exit 1
+    cd "../.." || exit 1
+    local knowhere_root="$(pwd)"
+    cd "$current_dir" || exit 1
+
+    # Debug: Print resolved paths
+    print_status "Script path: $script_path"
+    print_status "Script directory: $script_dir"
+    print_status "Current directory: $current_dir"
     
     print_status "Script directory: $script_dir"
     print_status "Knowhere root: $knowhere_root"
@@ -278,6 +304,12 @@ main() {
     echo "=== JVector Build Script ==="
     echo "Checking prerequisites..."
 
+    # Store original environment variables
+    local orig_pwd="$PWD"
+    local orig_path="$PATH"
+    local orig_java_home="$JAVA_HOME"
+    local orig_ld_library_path="$LD_LIBRARY_PATH"
+
     # Check required tools
     check_command "java"
     check_command "cmake"
@@ -300,41 +332,98 @@ main() {
     # Setup environment
     setup_env
     
+    # Debug: Print environment
+    print_status "PWD: $PWD"
+    print_status "PATH: $PATH"
+    print_status "JAVA_HOME: $JAVA_HOME"
+    print_status "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+    
     # Prepare build directory
     setup_build_dir
     
-    # Start build process
-    build "$@"
+    # Start build process with preserved environment
+    sudo -E PATH="$orig_path" \
+         JAVA_HOME="$orig_java_home" \
+         LD_LIBRARY_PATH="$orig_ld_library_path" \
+         PWD="$orig_pwd" \
+         "$0" --build "$@"
 }
 
-# Parse command line arguments
+# Print help message
+print_help() {
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Options:"
+    echo "  -t, --type TYPE    Build type (Debug|Release) [default: Release]"
+    echo "  -j, --jobs N       Number of parallel jobs [default: number of CPUs]"
+    echo "  -h, --help        Show this help message"
+    echo ""
+    echo "Environment variables:"
+    echo "  JAVA_HOME         Java home directory"
+    echo "  LD_LIBRARY_PATH   Library search path"
+}
+
+# Default values
 BUILD_TYPE="Release"
 JOBS=$(nproc)
+DIRECT_BUILD=0
 
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --debug)
-            BUILD_TYPE="Debug"
+        -t|--type)
+            if [ -z "$2" ] || [[ "$2" == -* ]]; then
+                print_error "Missing build type after $1"
+                exit 1
+            fi
+            BUILD_TYPE="$2"
+            shift 2
+            ;;
+        -j|--jobs)
+            if [ -z "$2" ] || [[ "$2" == -* ]]; then
+                print_error "Missing job count after $1"
+                exit 1
+            fi
+            JOBS="$2"
+            shift 2
+            ;;
+        --build)
+            DIRECT_BUILD=1
             shift
             ;;
-        --jobs=*)
-            JOBS="${1#*=}"
-            shift
-            ;;
-        --help)
-            echo "Usage: $0 [options]"
-            echo "Options:"
-            echo "  --debug        Build in debug mode"
-            echo "  --jobs=N       Use N parallel jobs (default: number of CPU cores)"
-            echo "  --help         Show this help message"
+        -h|--help)
+            print_help
             exit 0
             ;;
         *)
             print_error "Unknown option: $1"
+            print_help
             exit 1
             ;;
     esac
 done
 
-# Run main function with arguments
-main "$BUILD_TYPE" "$JOBS"
+# Validate build type
+case $BUILD_TYPE in
+    Debug|Release)
+        ;;
+    *)
+        print_error "Invalid build type: $BUILD_TYPE"
+        print_help
+        exit 1
+        ;;
+esac
+
+# Validate jobs
+if ! [[ "$JOBS" =~ ^[0-9]+$ ]] || [ "$JOBS" -lt 1 ]; then
+    print_error "Invalid job count: $JOBS"
+    print_help
+    exit 1
+fi
+
+# Either run build directly or go through main
+if [ $DIRECT_BUILD -eq 1 ]; then
+    build "$BUILD_TYPE" "$JOBS"
+else
+    main "$BUILD_TYPE" "$JOBS"
+fi
