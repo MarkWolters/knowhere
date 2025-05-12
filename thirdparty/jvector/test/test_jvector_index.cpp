@@ -117,6 +117,34 @@ std::pair<std::vector<uint8_t>, BitsetView> CreateBitsetView(size_t num_bits, co
     return {bitset_data, BitsetView(bitset_data.data(), num_bits, filtered_indices.size())};
 }
 
+// Helper function to verify distances are within radius
+bool VerifyDistancesWithinRadius(const float* query, const float* base, int64_t dim,
+                               const std::string& metric_type, float radius,
+                               const std::vector<float>& distances,
+                               const std::vector<int64_t>& labels) {
+    for (size_t i = 0; i < distances.size(); i++) {
+        float dist;
+        const float* base_vec = base + labels[i] * dim;
+        
+        if (metric_type == "L2") {
+            dist = ComputeL2Distance(query, base_vec, dim);
+        } else if (metric_type == "IP") {
+            dist = ComputeIPDistance(query, base_vec, dim);
+        } else if (metric_type == "COSINE") {
+            dist = ComputeCosineDistance(query, base_vec, dim);
+        } else {
+            return false;
+        }
+        
+        if (std::abs(dist - distances[i]) > 1e-5 || dist > radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 TEST_CASE("JVectorIndex Build", "[jvector]") {
     // Create test dataset
     const int64_t nb = 1000;     // number of vectors
@@ -459,6 +487,163 @@ TEST_CASE("JVectorIndex Regular Search", "[jvector]") {
         auto wrong_dim_vectors = GenerateRandomVectors(nq, dim + 1, 44);
         auto wrong_dim_dataset = GenDataSet(nq, dim + 1, wrong_dim_vectors.data());
         result = index->Search(wrong_dim_dataset, search_json, invalid_bitset);
+        REQUIRE_FALSE(result.has_value());
+    }
+}
+
+TEST_CASE("JVectorIndex RangeSearch", "[jvector]") {
+    // Create test dataset
+    const int64_t nb = 1000;     // number of base vectors
+    const int64_t nq = 10;       // number of query vectors
+    const int64_t dim = 128;     // dimension
+    const float radius = 2.0f;    // search radius
+
+    // Generate base vectors and query vectors
+    auto base_vectors = GenerateRandomVectors(nb, dim, 42);
+    auto query_vectors = GenerateRandomVectors(nq, dim, 43);
+
+    // Create datasets
+    auto base_dataset = GenDataSet(nb, dim, base_vectors.data());
+    auto query_dataset = GenDataSet(nq, dim, query_vectors.data());
+    REQUIRE(base_dataset != nullptr);
+    REQUIRE(query_dataset != nullptr);
+
+    SECTION("RangeSearch with L2 distance") {
+        auto index = std::make_shared<JVectorIndex>();
+        REQUIRE(index != nullptr);
+
+        // Build index
+        Json build_json;
+        build_json["dim"] = dim;
+        build_json["metric_type"] = "L2";
+        build_json["M"] = 16;
+        build_json["efConstruction"] = 64;
+
+        auto status = index->Build(base_dataset, build_json);
+        REQUIRE(status.ok());
+
+        // Search
+        Json search_json;
+        search_json["radius"] = radius;
+        search_json["ef_search"] = 64;
+
+        auto result = index->RangeSearch(query_dataset, search_json);
+        REQUIRE(result.has_value());
+        auto results = result.value();
+
+        // Verify results
+        auto distances = results->GetDistance();
+        auto labels = results->GetLabels();
+        int64_t total_results = results->GetRows();
+        REQUIRE(total_results > 0);
+
+        // Verify all distances are within radius
+        std::vector<float> query_distances;
+        std::vector<int64_t> query_labels;
+        int64_t offset = 0;
+
+        for (int64_t i = 0; i < nq; i++) {
+            // Find number of results for this query
+            int64_t num_results = 0;
+            while (offset + num_results < total_results) {
+                num_results++;
+            }
+
+            // Extract results for this query
+            query_distances.assign(distances + offset, distances + offset + num_results);
+            query_labels.assign(labels + offset, labels + offset + num_results);
+
+            // Verify distances are within radius and match ground truth
+            REQUIRE(VerifyDistancesWithinRadius(query_vectors.data() + i * dim,
+                                               base_vectors.data(), dim,
+                                               "L2", radius,
+                                               query_distances, query_labels));
+
+            offset += num_results;
+        }
+    }
+
+    SECTION("RangeSearch with BitsetView") {
+        auto index = std::make_shared<JVectorIndex>();
+        REQUIRE(index != nullptr);
+
+        // Build index
+        Json build_json;
+        build_json["dim"] = dim;
+        build_json["metric_type"] = "L2";
+        build_json["M"] = 16;
+        build_json["efConstruction"] = 64;
+
+        auto status = index->Build(base_dataset, build_json);
+        REQUIRE(status.ok());
+
+        // Create BitsetView that filters out first half of vectors
+        std::vector<int64_t> filtered_indices;
+        for (int64_t i = 0; i < nb/2; i++) {
+            filtered_indices.push_back(i);
+        }
+        auto [bitset_data, bitset] = CreateBitsetView(nb, filtered_indices);
+
+        // Search with BitsetView
+        Json search_json;
+        search_json["radius"] = radius;
+        search_json["ef_search"] = 64;
+
+        auto result = index->RangeSearch(query_dataset, search_json, bitset);
+        REQUIRE(result.has_value());
+        auto results = result.value();
+
+        // Verify results
+        auto labels = results->GetLabels();
+        int64_t total_results = results->GetRows();
+
+        // Verify no results come from filtered vectors
+        for (int64_t i = 0; i < total_results; i++) {
+            REQUIRE(labels[i] >= nb/2);
+        }
+    }
+
+    SECTION("RangeSearch with invalid parameters") {
+        auto index = std::make_shared<JVectorIndex>();
+        REQUIRE(index != nullptr);
+
+        // Build index
+        Json build_json;
+        build_json["dim"] = dim;
+        build_json["metric_type"] = "L2";
+        build_json["M"] = 16;
+        build_json["efConstruction"] = 64;
+
+        auto status = index->Build(base_dataset, build_json);
+        REQUIRE(status.ok());
+
+        Json search_json;
+        search_json["ef_search"] = 64;
+
+        // Test missing radius
+        auto result = index->RangeSearch(query_dataset, search_json);
+        REQUIRE_FALSE(result.has_value());
+
+        // Test radius = 0
+        search_json["radius"] = 0.0f;
+        result = index->RangeSearch(query_dataset, search_json);
+        REQUIRE_FALSE(result.has_value());
+
+        // Test radius < 0
+        search_json["radius"] = -1.0f;
+        result = index->RangeSearch(query_dataset, search_json);
+        REQUIRE_FALSE(result.has_value());
+
+        // Test empty query dataset
+        search_json["radius"] = radius;
+        auto empty_dataset = GenDataSet(0, dim, nullptr);
+        result = index->RangeSearch(empty_dataset, search_json);
+        REQUIRE_FALSE(result.has_value());
+
+        // Test dimension mismatch
+        auto wrong_dim_vectors = GenerateRandomVectors(nq, dim + 1, 44);
+        auto wrong_dim_dataset = GenDataSet(nq, dim + 1, wrong_dim_vectors.data());
+        result = index->RangeSearch(wrong_dim_dataset, search_json);
         REQUIRE_FALSE(result.has_value());
     }
 }

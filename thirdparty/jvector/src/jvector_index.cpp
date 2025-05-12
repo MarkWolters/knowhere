@@ -268,8 +268,69 @@ JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, const BitsetVi
 
 expected<DataSetPtr>
 JVectorIndex::RangeSearch(const DataSetPtr& dataset, const Json& json, const BitsetView& bitset) const {
-    // TODO: Implement range search logic using JNI
-    return expected<DataSetPtr>();
+    if (!dataset || dataset->GetRows() == 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Empty dataset");
+    }
+
+    if (dataset->GetDim() != dim_) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Dimension mismatch");
+    }
+
+    float radius = json["radius"].get<float>();
+    int ef_search = json["ef_search"].get<int>();
+
+    if (radius <= 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid radius");
+    }
+
+    if (ef_search <= 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid ef_search");
+    }
+
+    int64_t num_queries = dataset->GetRows();
+    std::vector<std::vector<float>> distances;
+    std::vector<std::vector<int64_t>> labels;
+
+    auto status = jvector::RangeSearchVectors(jvm_env_, index_obj_, dataset->GetTensor(), num_queries,
+                                           radius, distances, labels, ef_search, bitset);
+    if (!status.ok()) {
+        return expected<DataSetPtr>::Err(status);
+    }
+
+    // Count total number of results
+    int64_t total_results = 0;
+    for (const auto& row : labels) {
+        total_results += row.size();
+    }
+
+    if (total_results == 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "No results found within radius");
+    }
+
+    // Create result dataset
+    auto results = std::make_shared<DataSet>();
+    results->SetRows(total_results);
+    results->SetDim(1);  // Each result is a single distance-label pair
+
+    auto result_distances = new float[total_results];
+    auto result_labels = new int64_t[total_results];
+
+    // Flatten results
+    int64_t offset = 0;
+    for (size_t i = 0; i < distances.size(); i++) {
+        const auto& dist_row = distances[i];
+        const auto& label_row = labels[i];
+        for (size_t j = 0; j < dist_row.size(); j++) {
+            result_distances[offset] = dist_row[j];
+            result_labels[offset] = label_row[j];
+            offset++;
+        }
+    }
+
+    results->SetDistance(result_distances);
+    results->SetLabels(result_labels);
+
+    return expected<DataSetPtr>::Ok(results);
 }
 
 expected<DataSetPtr>

@@ -9,35 +9,43 @@ namespace jvector {
 
 namespace {
 // JNI class and method signatures
-constexpr char kGraphIndexClass[] = "io/github/jbellis/jvector/graph/GraphIndex";
-constexpr char kGraphIndexBuilderClass[] = "io/github/jbellis/jvector/graph/GraphIndexBuilder";
-constexpr char kVectorSimFuncClass[] = "io/github/jbellis/jvector/vector/VectorSimilarityFunction";
-constexpr char kArrayVectorFloatClass[] = "io/github/jbellis/jvector/vector/ArrayVectorFloat";
-constexpr char kSearchResultClass[] = "io/github/jbellis/jvector/graph/SearchResult";
+constexpr const char* kArrayVectorFloatClass = "io/github/jbellis/jvector/vector/ArrayVectorFloat";
+constexpr const char* kGraphIndexBuilderClass = "io/github/jbellis/jvector/graph/GraphIndexBuilder";
+constexpr const char* kGraphIndexClass = "io/github/jbellis/jvector/graph/GraphIndex";
+constexpr const char* kSearchResultClass = "io/github/jbellis/jvector/graph/SearchResult";
+constexpr const char* kRangeSearchResultClass = "io/github/jbellis/jvector/graph/RangeSearchResult";
 
 // Cache for commonly used class references and method IDs
-struct {
-    // Class references
-    jclass graph_index_class;
-    jclass graph_index_builder_class;
-    jclass vector_sim_func_class;
+struct JNICache {
     jclass array_vector_float_class;
+    jclass graph_index_builder_class;
+    jclass graph_index_class;
     jclass search_result_class;
-    
-    // GraphIndexBuilder methods
+    jclass range_search_result_class;
+
     jmethodID builder_constructor;
-    jmethodID builder_add_vector;
-    jmethodID builder_build;
-    
-    // GraphIndex methods
-    jmethodID search_method;
-    jmethodID get_vector_method;
-    jmethodID size_method;
-    
-    // ArrayVectorFloat methods
-    jmethodID vector_constructor;
-    jmethodID vector_get_values;
-} g_jni_cache;
+    jmethodID builder_add_method;
+    jmethodID builder_build_method;
+    jmethodID index_search_method;
+    jmethodID index_range_search_method;
+    jmethodID search_result_constructor;
+    jmethodID range_search_result_constructor;
+
+    JNICache() : array_vector_float_class(nullptr),
+                 graph_index_builder_class(nullptr),
+                 graph_index_class(nullptr),
+                 search_result_class(nullptr),
+                 range_search_result_class(nullptr),
+                 builder_constructor(nullptr),
+                 builder_add_method(nullptr),
+                 builder_build_method(nullptr),
+                 index_search_method(nullptr),
+                 index_range_search_method(nullptr),
+                 search_result_constructor(nullptr),
+                 range_search_result_constructor(nullptr) {}
+};
+
+JNICache g_jni_cache;
 
 } // namespace
 
@@ -66,13 +74,13 @@ Status InitializeJVM(JavaVM** jvm) {
 }
 
 Status LoadJVectorClasses(JNIEnv* env) {
-    // Load GraphIndex class
-    jclass local_graph_index_class = env->FindClass(kGraphIndexClass);
-    if (local_graph_index_class == nullptr) {
-        return Status(Status::Code::Invalid, "Failed to find GraphIndex class");
+    // Load ArrayVectorFloat class
+    jclass local_vector_class = env->FindClass(kArrayVectorFloatClass);
+    if (local_vector_class == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to find ArrayVectorFloat class");
     }
-    g_jni_cache.graph_index_class = (jclass)env->NewGlobalRef(local_graph_index_class);
-    env->DeleteLocalRef(local_graph_index_class);
+    g_jni_cache.array_vector_float_class = (jclass)env->NewGlobalRef(local_vector_class);
+    env->DeleteLocalRef(local_vector_class);
 
     // Load GraphIndexBuilder class
     jclass local_builder_class = env->FindClass(kGraphIndexBuilderClass);
@@ -82,21 +90,13 @@ Status LoadJVectorClasses(JNIEnv* env) {
     g_jni_cache.graph_index_builder_class = (jclass)env->NewGlobalRef(local_builder_class);
     env->DeleteLocalRef(local_builder_class);
 
-    // Load VectorSimilarityFunction class
-    jclass local_sim_func_class = env->FindClass(kVectorSimFuncClass);
-    if (local_sim_func_class == nullptr) {
-        return Status(Status::Code::Invalid, "Failed to find VectorSimilarityFunction class");
+    // Load GraphIndex class
+    jclass local_graph_index_class = env->FindClass(kGraphIndexClass);
+    if (local_graph_index_class == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to find GraphIndex class");
     }
-    g_jni_cache.vector_sim_func_class = (jclass)env->NewGlobalRef(local_sim_func_class);
-    env->DeleteLocalRef(local_sim_func_class);
-
-    // Load ArrayVectorFloat class
-    jclass local_vector_class = env->FindClass(kArrayVectorFloatClass);
-    if (local_vector_class == nullptr) {
-        return Status(Status::Code::Invalid, "Failed to find ArrayVectorFloat class");
-    }
-    g_jni_cache.array_vector_float_class = (jclass)env->NewGlobalRef(local_vector_class);
-    env->DeleteLocalRef(local_vector_class);
+    g_jni_cache.graph_index_class = (jclass)env->NewGlobalRef(local_graph_index_class);
+    env->DeleteLocalRef(local_graph_index_class);
 
     // Load SearchResult class
     jclass local_search_result_class = env->FindClass(kSearchResultClass);
@@ -106,6 +106,14 @@ Status LoadJVectorClasses(JNIEnv* env) {
     g_jni_cache.search_result_class = (jclass)env->NewGlobalRef(local_search_result_class);
     env->DeleteLocalRef(local_search_result_class);
 
+    // Load RangeSearchResult class
+    jclass local_range_result_class = env->FindClass(kRangeSearchResultClass);
+    if (local_range_result_class == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to find RangeSearchResult class");
+    }
+    g_jni_cache.range_search_result_class = (jclass)env->NewGlobalRef(local_range_result_class);
+    env->DeleteLocalRef(local_range_result_class);
+
     // Get GraphIndexBuilder method IDs
     g_jni_cache.builder_constructor = env->GetMethodID(g_jni_cache.graph_index_builder_class, "<init>", 
         "(Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;I)V");
@@ -113,23 +121,29 @@ Status LoadJVectorClasses(JNIEnv* env) {
         return Status(Status::Code::Invalid, "Failed to get builder constructor");
     }
 
-    g_jni_cache.builder_add_vector = env->GetMethodID(g_jni_cache.graph_index_builder_class, "add", 
+    g_jni_cache.builder_add_method = env->GetMethodID(g_jni_cache.graph_index_builder_class, "add", 
         "([F)V");
-    if (g_jni_cache.builder_add_vector == nullptr) {
+    if (g_jni_cache.builder_add_method == nullptr) {
         return Status(Status::Code::Invalid, "Failed to get add vector method");
     }
 
-    g_jni_cache.builder_build = env->GetMethodID(g_jni_cache.graph_index_builder_class, "build", 
+    g_jni_cache.builder_build_method = env->GetMethodID(g_jni_cache.graph_index_builder_class, "build", 
         "()Lio/github/jbellis/jvector/graph/GraphIndex;");
-    if (g_jni_cache.builder_build == nullptr) {
+    if (g_jni_cache.builder_build_method == nullptr) {
         return Status(Status::Code::Invalid, "Failed to get build method");
     }
 
     // Get GraphIndex method IDs
-    g_jni_cache.search_method = env->GetMethodID(g_jni_cache.graph_index_class, "search", 
-        "([FI)[I");
-    if (g_jni_cache.search_method == nullptr) {
+    g_jni_cache.index_search_method = env->GetMethodID(g_jni_cache.graph_index_class, "search",
+        "(Lio/github/jbellis/jvector/vector/VectorFloat;IF)Lio/github/jbellis/jvector/graph/SearchResult;");
+    if (g_jni_cache.index_search_method == nullptr) {
         return Status(Status::Code::Invalid, "Failed to get search method");
+    }
+
+    g_jni_cache.index_range_search_method = env->GetMethodID(g_jni_cache.graph_index_class, "rangeSearch",
+        "(Lio/github/jbellis/jvector/vector/VectorFloat;FIF)Lio/github/jbellis/jvector/graph/RangeSearchResult;");
+    if (g_jni_cache.index_range_search_method == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get range search method");
     }
 
     g_jni_cache.get_vector_method = env->GetMethodID(g_jni_cache.graph_index_class, "getVector", 
@@ -144,11 +158,16 @@ Status LoadJVectorClasses(JNIEnv* env) {
         return Status(Status::Code::Invalid, "Failed to get size method");
     }
 
-    // Get ArrayVectorFloat method IDs
-    g_jni_cache.vector_constructor = env->GetMethodID(g_jni_cache.array_vector_float_class, "<init>", 
-        "([F)V");
-    if (g_jni_cache.vector_constructor == nullptr) {
-        return Status(Status::Code::Invalid, "Failed to get vector constructor");
+    // Get SearchResult method IDs
+    g_jni_cache.search_result_constructor = env->GetMethodID(g_jni_cache.search_result_class, "<init>", "([F[J)V");
+    if (g_jni_cache.search_result_constructor == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get SearchResult constructor");
+    }
+
+    // Get RangeSearchResult method IDs
+    g_jni_cache.range_search_result_constructor = env->GetMethodID(g_jni_cache.range_search_result_class, "<init>", "([[F[[J)V");
+    if (g_jni_cache.range_search_result_constructor == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get RangeSearchResult constructor");
     }
 
     g_jni_cache.vector_get_values = env->GetMethodID(g_jni_cache.array_vector_float_class, "getValues", 
@@ -342,6 +361,105 @@ Status CheckJavaException(JNIEnv* env) {
         return status;
     }
     
+    return Status::OK();
+}
+
+Status RangeSearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
+                       float radius, std::vector<std::vector<float>>& distances,
+                       std::vector<std::vector<int64_t>>& labels, int ef_search, const BitsetView& bitset) {
+    if (query_vectors == nullptr || num_queries <= 0) {
+        return Status(Status::Code::Invalid, "Invalid query vectors");
+    }
+
+    if (radius <= 0) {
+        return Status(Status::Code::Invalid, "Invalid radius");
+    }
+
+    if (ef_search <= 0) {
+        return Status(Status::Code::Invalid, "Invalid ef_search");
+    }
+
+    // Create query vector array
+    jfloatArray query_array = env->NewFloatArray(num_queries);
+    if (query_array == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to create query vector array");
+    }
+    env->SetFloatArrayRegion(query_array, 0, num_queries, query_vectors);
+
+    // Create ArrayVectorFloat object for query
+    jobject query_vector = env->NewObject(g_jni_cache.array_vector_float_class,
+                                        g_jni_cache.vector_constructor,
+                                        query_array);
+    if (query_vector == nullptr) {
+        env->DeleteLocalRef(query_array);
+        return Status(Status::Code::Invalid, "Failed to create query vector object");
+    }
+
+    // Call rangeSearch method
+    jobject range_result = env->CallObjectMethod(index_obj,
+                                               g_jni_cache.index_range_search_method,
+                                               query_vector,
+                                               radius,
+                                               ef_search,
+                                               bitset.data());
+    if (range_result == nullptr) {
+        env->DeleteLocalRef(query_array);
+        env->DeleteLocalRef(query_vector);
+        return Status(Status::Code::Invalid, "Failed to execute range search");
+    }
+
+    // Get distances array from RangeSearchResult
+    jclass range_result_class = env->GetObjectClass(range_result);
+    jfieldID distances_field = env->GetFieldID(range_result_class, "distances", "[[F");
+    jobjectArray distances_array = (jobjectArray)env->GetObjectField(range_result, distances_field);
+
+    // Get labels array from RangeSearchResult
+    jfieldID labels_field = env->GetFieldID(range_result_class, "labels", "[[J");
+    jobjectArray labels_array = (jobjectArray)env->GetObjectField(range_result, labels_field);
+
+    if (distances_array == nullptr || labels_array == nullptr) {
+        env->DeleteLocalRef(query_array);
+        env->DeleteLocalRef(query_vector);
+        env->DeleteLocalRef(range_result);
+        return Status(Status::Code::Invalid, "Failed to get results from range search");
+    }
+
+    // Convert results to C++ vectors
+    jsize num_results = env->GetArrayLength(distances_array);
+    distances.resize(num_results);
+    labels.resize(num_results);
+
+    for (jsize i = 0; i < num_results; i++) {
+        jfloatArray dist_row = (jfloatArray)env->GetObjectArrayElement(distances_array, i);
+        jlongArray label_row = (jlongArray)env->GetObjectArrayElement(labels_array, i);
+
+        if (dist_row == nullptr || label_row == nullptr) {
+            env->DeleteLocalRef(query_array);
+            env->DeleteLocalRef(query_vector);
+            env->DeleteLocalRef(range_result);
+            env->DeleteLocalRef(distances_array);
+            env->DeleteLocalRef(labels_array);
+            return Status(Status::Code::Invalid, "Failed to get result row");
+        }
+
+        jsize row_size = env->GetArrayLength(dist_row);
+        distances[i].resize(row_size);
+        labels[i].resize(row_size);
+
+        env->GetFloatArrayRegion(dist_row, 0, row_size, distances[i].data());
+        env->GetLongArrayRegion(label_row, 0, row_size, reinterpret_cast<jlong*>(labels[i].data()));
+
+        env->DeleteLocalRef(dist_row);
+        env->DeleteLocalRef(label_row);
+    }
+
+    // Cleanup JNI references
+    env->DeleteLocalRef(query_array);
+    env->DeleteLocalRef(query_vector);
+    env->DeleteLocalRef(range_result);
+    env->DeleteLocalRef(distances_array);
+    env->DeleteLocalRef(labels_array);
+
     return Status::OK();
 }
 

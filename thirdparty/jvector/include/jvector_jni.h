@@ -16,6 +16,10 @@ Status AddVectors(JNIEnv* env, jobject builder_obj, const float* vectors, int64_
 Status SearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
                     int64_t k, float* distances, int64_t* labels, int ef_search, const BitsetView& bitset);
 
+Status RangeSearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
+                       float radius, std::vector<std::vector<float>>& distances,
+                       std::vector<std::vector<int64_t>>& labels, int ef_search, const BitsetView& bitset);
+
 // JNI exception handling
 Status CheckJavaException(JNIEnv* env);
 
