@@ -141,8 +141,29 @@ JVectorIndex::InitJVM() {
         return Status::OK();
     }
 
-    // TODO: Initialize JVM with proper classpath including JVector JAR
-    return Status::OK();
+    // Set up JVM options
+    JavaVMInitArgs vm_args;
+    JavaVMOption options[1];
+    
+    // Set classpath to include JVector JAR
+    std::string classpath = "-Djava.class.path=" + 
+        std::string(KNOWHERE_JVECTOR_PATH) + "/lib/jvector-4.0.0-beta.5-SNAPSHOT.jar";
+    options[0].optionString = const_cast<char*>(classpath.c_str());
+    
+    vm_args.version = JNI_VERSION_1_8;
+    vm_args.nOptions = 1;
+    vm_args.options = options;
+    vm_args.ignoreUnrecognized = JNI_FALSE;
+
+    // Create JVM
+    JNIEnv* env;
+    jint res = JNI_CreateJavaVM(&jvm_, (void**)&env, &vm_args);
+    if (res != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to create JVM");
+    }
+
+    // Load JVector classes
+    return jvector::LoadJVectorClasses(env);
 }
 
 Status
@@ -151,8 +172,26 @@ JVectorIndex::CreateJVectorIndex(const Json& config) {
         return Status(Status::Code::Invalid, "JVM not initialized");
     }
 
-    // TODO: Create JVector index instance using JNI
-    return Status::OK();
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Get dimension from config
+    if (!config.contains("dim")) {
+        return Status(Status::Code::Invalid, "Missing dimension in config");
+    }
+    dim_ = config["dim"].get<int>();
+
+    // Get metric type from config
+    std::string metric_type = "L2";  // Default to L2
+    if (config.contains("metric_type")) {
+        metric_type = config["metric_type"].get<std::string>();
+    }
+    metric_type_ = metric_type;
+
+    // Create the JVector index
+    return jvector::CreateGraphIndex(env, &index_object_, metric_type, dim_, config);
 }
 
 Status

@@ -16,15 +16,25 @@ constexpr char kArrayVectorFloatClass[] = "io/github/jbellis/jvector/vector/Arra
 
 // Cache for commonly used class references and method IDs
 struct {
+    // Class references
     jclass graph_index_class;
     jclass graph_index_builder_class;
     jclass vector_sim_func_class;
     jclass array_vector_float_class;
     
+    // GraphIndexBuilder methods
     jmethodID builder_constructor;
     jmethodID builder_add_vector;
     jmethodID builder_build;
+    
+    // GraphIndex methods
     jmethodID search_method;
+    jmethodID get_vector_method;
+    jmethodID size_method;
+    
+    // ArrayVectorFloat methods
+    jmethodID vector_constructor;
+    jmethodID vector_get_values;
 } g_jni_cache;
 
 } // namespace
@@ -86,18 +96,61 @@ Status LoadJVectorClasses(JNIEnv* env) {
     g_jni_cache.array_vector_float_class = (jclass)env->NewGlobalRef(local_vector_class);
     env->DeleteLocalRef(local_vector_class);
 
-    // Get method IDs
-    g_jni_cache.builder_constructor = env->GetMethodID(g_jni_cache.graph_index_builder_class, "<init>", "(Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;I)V");
+    // Get GraphIndexBuilder method IDs
+    g_jni_cache.builder_constructor = env->GetMethodID(g_jni_cache.graph_index_builder_class, "<init>", 
+        "(Lio/github/jbellis/jvector/vector/VectorSimilarityFunction;I)V");
     if (g_jni_cache.builder_constructor == nullptr) {
         return Status(Status::Code::Invalid, "Failed to get builder constructor");
     }
 
-    // TODO: Get other required method IDs
+    g_jni_cache.builder_add_vector = env->GetMethodID(g_jni_cache.graph_index_builder_class, "add", 
+        "([F)V");
+    if (g_jni_cache.builder_add_vector == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get add vector method");
+    }
+
+    g_jni_cache.builder_build = env->GetMethodID(g_jni_cache.graph_index_builder_class, "build", 
+        "()Lio/github/jbellis/jvector/graph/GraphIndex;");
+    if (g_jni_cache.builder_build == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get build method");
+    }
+
+    // Get GraphIndex method IDs
+    g_jni_cache.search_method = env->GetMethodID(g_jni_cache.graph_index_class, "search", 
+        "([FI)[I");
+    if (g_jni_cache.search_method == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get search method");
+    }
+
+    g_jni_cache.get_vector_method = env->GetMethodID(g_jni_cache.graph_index_class, "getVector", 
+        "(I)[F");
+    if (g_jni_cache.get_vector_method == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get getVector method");
+    }
+
+    g_jni_cache.size_method = env->GetMethodID(g_jni_cache.graph_index_class, "size", 
+        "()I");
+    if (g_jni_cache.size_method == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get size method");
+    }
+
+    // Get ArrayVectorFloat method IDs
+    g_jni_cache.vector_constructor = env->GetMethodID(g_jni_cache.array_vector_float_class, "<init>", 
+        "([F)V");
+    if (g_jni_cache.vector_constructor == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get vector constructor");
+    }
+
+    g_jni_cache.vector_get_values = env->GetMethodID(g_jni_cache.array_vector_float_class, "getValues", 
+        "()[F");
+    if (g_jni_cache.vector_get_values == nullptr) {
+        return Status(Status::Code::Invalid, "Failed to get vector getValues method");
+    }
 
     return Status::OK();
 }
 
-Status CreateGraphIndex(JNIEnv* env, jobject* index_obj, const std::string& metric_type, int dim) {
+Status CreateGraphIndex(JNIEnv* env, jobject* index_obj, const std::string& metric_type, int dim, const Json& config) {
     // Create VectorSimilarityFunction enum value based on metric type
     jobject sim_func = nullptr;
     jfieldID field_id = nullptr;
@@ -124,14 +177,46 @@ Status CreateGraphIndex(JNIEnv* env, jobject* index_obj, const std::string& metr
     // Create GraphIndexBuilder
     jobject builder = env->NewObject(g_jni_cache.graph_index_builder_class, g_jni_cache.builder_constructor, sim_func, dim);
     if (builder == nullptr) {
+        env->DeleteLocalRef(sim_func);
         return Status(Status::Code::Invalid, "Failed to create GraphIndexBuilder");
     }
 
-    // TODO: Configure builder parameters (M, ef_construction, etc.)
+    // Configure builder parameters
+    jclass builder_class = env->GetObjectClass(builder);
+    
+    // Set M (max connections per node)
+    if (config.contains("M")) {
+        jmethodID set_m = env->GetMethodID(builder_class, "setM", "(I)Lio/github/jbellis/jvector/graph/GraphIndexBuilder;");
+        if (set_m != nullptr) {
+            env->CallObjectMethod(builder, set_m, config["M"].get<int>());
+        }
+    }
 
-    // Create empty index
-    // TODO: Call build() on builder to get initial empty index
-    *index_obj = nullptr; // Replace with actual index object
+    // Set ef_construction
+    if (config.contains("efConstruction")) {
+        jmethodID set_ef = env->GetMethodID(builder_class, "setEfConstruction", "(I)Lio/github/jbellis/jvector/graph/GraphIndexBuilder;");
+        if (set_ef != nullptr) {
+            env->CallObjectMethod(builder, set_ef, config["efConstruction"].get<int>());
+        }
+    }
+
+    // Build empty index
+    jobject index = env->CallObjectMethod(builder, g_jni_cache.builder_build);
+    if (index == nullptr) {
+        env->DeleteLocalRef(builder);
+        env->DeleteLocalRef(sim_func);
+        env->DeleteLocalRef(builder_class);
+        return Status(Status::Code::Invalid, "Failed to build index");
+    }
+
+    // Create global reference for the index
+    *index_obj = env->NewGlobalRef(index);
+
+    // Clean up local references
+    env->DeleteLocalRef(index);
+    env->DeleteLocalRef(builder);
+    env->DeleteLocalRef(sim_func);
+    env->DeleteLocalRef(builder_class);
 
     return Status::OK();
 }

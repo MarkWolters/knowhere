@@ -14,11 +14,20 @@ set(JVECTOR_SRC
 # Create library
 add_library(knowhere_jvector STATIC ${JVECTOR_SRC})
 
+# Define JVector path
+set(KNOWHERE_JVECTOR_PATH ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Include directories
 target_include_directories(knowhere_jvector
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# Add compile definitions
+target_compile_definitions(knowhere_jvector
+    PRIVATE
+        KNOWHERE_JVECTOR_PATH="${KNOWHERE_JVECTOR_PATH}"
 )
 
 # Link with JNI
