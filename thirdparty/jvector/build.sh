@@ -225,10 +225,11 @@ build() {
     print_status "Using $jobs parallel jobs"
 
     # Get directory paths
-    local script_dir=$(dirname "$(readlink -f "$0")")
-    local knowhere_root=$(dirname "$(dirname "$script_dir")")
+    local script_dir=$(cd "$(dirname "$0")" && pwd)
+    local knowhere_root=$(cd "$script_dir/../.." && pwd)
     local current_dir=$(pwd)
     
+    print_status "Script directory: $script_dir"
     print_status "Knowhere root: $knowhere_root"
 
     # First build Knowhere
@@ -238,7 +239,7 @@ build() {
     cd build
     
     # Configure Knowhere
-    cmake "$knowhere_root" \
+    cmake .. \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DMILVUS_USE_JVECTOR=ON \
         -DKNOWHERE_BUILD_TESTS=ON
@@ -252,7 +253,7 @@ build() {
     cd build
     
     # Configure JVector
-    cmake "$script_dir" \
+    cmake .. \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DKNOWHERE_ROOT="$knowhere_root" \
         -DKNOWHERE_BUILD_TESTS=ON
