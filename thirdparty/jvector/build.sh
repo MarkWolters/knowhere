@@ -79,7 +79,7 @@ check_system_deps() {
     
     case $os_id in
         "ubuntu")
-            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev")
+            local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev" "libboost-all-dev")
             local missing_deps=()
             
             for pkg in "${deps[@]}"; do

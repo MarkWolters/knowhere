@@ -15,6 +15,12 @@ if(NOT EXISTS ${JVECTOR_JAR_PATH})
     )
 endif()
 
+# Find Boost
+set(Boost_USE_STATIC_LIBS OFF)
+set(Boost_USE_MULTITHREADED ON)
+set(Boost_USE_STATIC_RUNTIME OFF)
+find_package(Boost 1.65.0 REQUIRED COMPONENTS system filesystem)
+
 # Find Java 21
 find_package(Java 21 REQUIRED)
 include(UseJava)
