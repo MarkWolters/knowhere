@@ -15,9 +15,55 @@ if(NOT EXISTS ${JVECTOR_JAR_PATH})
     )
 endif()
 
-# Find JNI
-find_package(JNI REQUIRED)
-include_directories(${JNI_INCLUDE_DIRS})
+# Find Java 21
+find_package(Java 21 REQUIRED)
+include(UseJava)
+
+# Verify Java version
+if(Java_VERSION_MAJOR LESS 21)
+    message(FATAL_ERROR "JDK 21 or higher is required. Found version ${Java_VERSION}")
+endif()
+
+# Set JAVA_HOME if not set
+if(NOT DEFINED ENV{JAVA_HOME})
+    execute_process(
+        COMMAND which java
+        OUTPUT_VARIABLE JAVA_EXECUTABLE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    get_filename_component(JAVA_BIN ${JAVA_EXECUTABLE} DIRECTORY)
+    get_filename_component(JAVA_HOME ${JAVA_BIN} DIRECTORY)
+    set(ENV{JAVA_HOME} ${JAVA_HOME})
+endif()
+
+# Find JNI without requiring AWT
+set(JAVA_AWT_LIBRARY NotNeeded)
+set(JAVA_JVM_LIBRARY NotNeeded)
+find_package(JNI REQUIRED COMPONENTS JVM)
+
+# Explicitly find the JNI headers if not found
+if(NOT JNI_INCLUDE_DIRS)
+    if(DEFINED ENV{JAVA_HOME})
+        set(JNI_INCLUDE_DIRS
+            $ENV{JAVA_HOME}/include
+            $ENV{JAVA_HOME}/include/linux
+        )
+    endif()
+endif()
+
+if(NOT JNI_FOUND)
+    message(FATAL_ERROR "JNI not found. Please ensure JAVA_HOME is set correctly.")
+endif()
+
+# Add JNI include directories
+include_directories(
+    ${JNI_INCLUDE_DIRS}
+    ${JAVA_INCLUDE_PATH}
+    ${JAVA_INCLUDE_PATH2}
+)
+
+message(STATUS "Found JNI: ${JNI_INCLUDE_DIRS}")
+
 
 # Set source files
 set(JVECTOR_SRC

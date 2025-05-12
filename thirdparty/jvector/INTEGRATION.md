@@ -5,7 +5,7 @@ This guide explains how to integrate the JVector plugin with Milvus for high-per
 ## Prerequisites
 
 - Milvus 2.3.0 or higher
-- JDK 8 or higher
+- JDK 21
 - CMake 3.18 or higher
 - C++17 compatible compiler
 - Linux environment (recommended for production)

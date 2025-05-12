@@ -33,14 +33,33 @@ check_command() {
 check_java() {
     if ! java -version 2>&1 | grep -q "version"; then
         print_error "Java is required but not installed."
+        print_error "Please install OpenJDK 21:"
+        print_error "sudo apt-get install -y openjdk-21-jdk-headless default-jdk-headless"
         exit 1
     fi
     java_version=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | cut -d'.' -f1)
-    if [ "$java_version" -lt "8" ]; then
-        print_error "Java 8 or higher is required. Found version $java_version"
+    if [ "$java_version" -lt "21" ]; then
+        print_error "JDK 21 or higher is required. Found version $java_version"
+        print_error "Please install OpenJDK 21:"
+        print_error "sudo apt-get install -y openjdk-21-jdk-headless"
         exit 1
     fi
     print_status "Found Java version: $(java -version 2>&1 | head -n 1)"
+    
+    # Set JAVA_HOME if not already set
+    if [ -z "$JAVA_HOME" ]; then
+        if [ -d "/usr/lib/jvm/java-21-openjdk-amd64" ]; then
+            export JAVA_HOME="/usr/lib/jvm/java-21-openjdk-amd64"
+        else
+            # Try to find Java home from java command
+            java_path=$(readlink -f $(which java))
+            java_home=$(dirname $(dirname $java_path))
+            export JAVA_HOME="$java_home"
+        fi
+        print_status "Set JAVA_HOME to: $JAVA_HOME"
+    else
+        print_status "Using existing JAVA_HOME: $JAVA_HOME"
+    fi
 }
 
 # Check CMake version
