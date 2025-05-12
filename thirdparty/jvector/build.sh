@@ -74,27 +74,84 @@ check_cmake() {
 }
 
 # Verify Folly installation
+build_folly_from_source() {
+    print_status "Building Folly from source..."
+    local folly_version="2024.01.15.00"
+    local build_dir="/tmp/folly-build"
+    
+    # Create build directory
+    rm -rf "$build_dir"
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+    
+    # Download and extract Folly
+    wget "https://github.com/facebook/folly/archive/v${folly_version}.tar.gz"
+    tar xzf "v${folly_version}.tar.gz"
+    cd "folly-${folly_version}"
+    
+    # Build and install
+    mkdir -p _build && cd _build
+    cmake -DCMAKE_BUILD_TYPE=Release ..
+    make -j$(nproc)
+    make install
+    ldconfig
+    
+    # Clean up
+    cd /
+    rm -rf "$build_dir"
+}
+
 verify_folly() {
     if ! pkg-config --exists libfolly; then
-        print_error "Folly library not found or not properly installed."
-        print_error "Please ensure all dependencies are installed and pkg-config is properly configured."
-        exit 1
+        print_warning "Folly package not found, attempting to build from source..."
+        if [ "$EUID" -ne 0 ]; then
+            print_error "Please run with sudo to build Folly from source"
+            exit 1
+        fi
+        build_folly_from_source
+        
+        # Verify again
+        if ! pkg-config --exists libfolly; then
+            print_error "Failed to build and install Folly"
+            exit 1
+        fi
     fi
     print_status "Found Folly: $(pkg-config --modversion libfolly)"
 }
 
 # Check system dependencies
+# Setup repositories
+setup_repos() {
+    if [ "$EUID" -ne 0 ]; then
+        print_error "Please run with sudo to setup repositories"
+        exit 1
+    fi
+
+    # Add Facebook repository
+    if [ ! -f /etc/apt/sources.list.d/facebook.list ]; then
+        print_status "Adding Facebook repository..."
+        wget -q https://download.opensuse.org/repositories/home:facebook/xUbuntu_22.04/Release.key -O- | apt-key add -
+        echo "deb https://download.opensuse.org/repositories/home:facebook/xUbuntu_22.04/ ./" > /etc/apt/sources.list.d/facebook.list
+        apt-get update
+    fi
+}
+
 check_system_deps() {
     local os_id=$(cat /etc/os-release | grep ^ID= | cut -d= -f2)
     
     case $os_id in
         "ubuntu")
+            # Setup repositories first
+            setup_repos
+
             # Basic build tools and math libraries
             local deps=("build-essential" "libblas-dev" "liblapack-dev" "libopenblas-dev" "libboost-all-dev"
                       # Folly dependencies
                       "libssl-dev" "libgflags-dev" "libgoogle-glog-dev" "libdouble-conversion-dev"
                       "libfmt-dev" "libfolly-dev" "libevent-dev" "libsnappy-dev" "zlib1g-dev"
-                      "liblz4-dev" "liblzma-dev" "libzstd-dev" "libbz2-dev" "libsodium-dev")
+                      "liblz4-dev" "liblzma-dev" "libzstd-dev" "libbz2-dev" "libsodium-dev"
+                      # Additional Facebook packages
+                      "libfolly-dev" "libfizz-dev" "libwangle-dev" "libfmt-dev")
             local missing_deps=()
             
             for pkg in "${deps[@]}"; do
