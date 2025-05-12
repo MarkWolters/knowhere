@@ -47,6 +47,9 @@ JVectorIndex::JVectorIndex(const int32_t& version) : IndexNode(version), jvm_(nu
 
 JVectorIndex::~JVectorIndex() {
     DestroyJVectorIndex();
+    if (jvm_ != nullptr) {
+        DetachThreadLocalJNIEnv(jvm_);
+    }
 }
 
 Status
@@ -268,6 +271,11 @@ JVectorIndex::Search(const DataSetPtr& dataset, const Json& json, const BitsetVi
 
 expected<DataSetPtr>
 JVectorIndex::RangeSearch(const DataSetPtr& dataset, const Json& json, const BitsetView& bitset) const {
+    // Check if index is initialized
+    if (!index_object_) {
+        LOG_ERROR_ << "Index not initialized";
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Index not initialized");
+    }
     if (!dataset || dataset->GetRows() == 0) {
         return expected<DataSetPtr>::Err(Status::invalid_argument, "Empty dataset");
     }
@@ -276,8 +284,31 @@ JVectorIndex::RangeSearch(const DataSetPtr& dataset, const Json& json, const Bit
         return expected<DataSetPtr>::Err(Status::invalid_argument, "Dimension mismatch");
     }
 
-    float radius = json["radius"].get<float>();
-    int ef_search = json["ef_search"].get<int>();
+    // Validate JSON parameters
+    if (!json.contains("radius")) {
+        LOG_ERROR_ << "Missing radius parameter";
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Missing radius parameter");
+    }
+    if (!json.contains("ef_search")) {
+        LOG_ERROR_ << "Missing ef_search parameter";
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Missing ef_search parameter");
+    }
+
+    float radius;
+    int ef_search;
+    try {
+        radius = json["radius"].get<float>();
+        ef_search = json["ef_search"].get<int>();
+    } catch (const std::exception& e) {
+        LOG_ERROR_ << "Invalid parameter type: " << e.what();
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid parameter type");
+    }
+
+    // Check for NaN or infinite radius
+    if (std::isnan(radius) || std::isinf(radius)) {
+        LOG_ERROR_ << "Invalid radius value: " << radius;
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid radius value");
+    }
 
     if (radius <= 0) {
         return expected<DataSetPtr>::Err(Status::invalid_argument, "Invalid radius");
@@ -335,25 +366,313 @@ JVectorIndex::RangeSearch(const DataSetPtr& dataset, const Json& json, const Bit
 
 expected<DataSetPtr>
 JVectorIndex::GetVectorByIds(const DataSetPtr& dataset) const {
-    // TODO: Implement get vectors logic using JNI
-    return expected<DataSetPtr>();
+    // Check if index is initialized
+    if (!index_object_) {
+        LOG_ERROR_ << "Index not initialized";
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Index not initialized");
+    }
+    if (!dataset || dataset->GetRows() == 0) {
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Empty dataset");
+    }
+
+    auto labels = dataset->GetLabels();
+    if (labels == nullptr) {
+        LOG_ERROR_ << "No labels provided";
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "No labels provided");
+    }
+
+    // Check if any label is out of bounds
+    for (int64_t i = 0; i < dataset->GetRows(); i++) {
+        if (labels[i] < 0 || labels[i] >= size_) {
+            LOG_ERROR_ << "Label out of bounds: " << labels[i] << ", size: " << size_;
+            return expected<DataSetPtr>::Err(Status::invalid_argument, "Label out of bounds");
+        }
+    }
+
+    int64_t num_vectors = dataset->GetRows();
+    auto result_vectors = new float[num_vectors * dim_];
+    bool has_error = false;
+
+    auto status = EnsureThreadLocalJNIEnv(jvm_, &env);
+    if (!status.ok()) {
+        return expected<DataSetPtr>::Err(status);
+    }
+
+    // Get the getVector method from GraphIndex class
+    jmethodID get_vector_method = env->GetMethodID(g_jni_cache.graph_index_class, "getVector", "(J)[F");
+    if (get_vector_method == nullptr) {
+        delete[] result_vectors;
+        LOG_ERROR_ << "Failed to get getVector method";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return expected<DataSetPtr>::Err(status);
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Failed to get getVector method");
+    }
+
+    // Get vectors one by one
+    for (int64_t i = 0; i < num_vectors && !has_error; i++) {
+        jfloatArray vector_array = (jfloatArray)env->CallObjectMethod(index_object_, get_vector_method, labels[i]);
+        if (vector_array == nullptr) {
+            LOG_ERROR_ << "Failed to get vector for id " << labels[i];
+            has_error = true;
+            continue;
+        }
+
+        // Copy vector data
+        env->GetFloatArrayRegion(vector_array, 0, dim_, result_vectors + i * dim_);
+        env->DeleteLocalRef(vector_array);
+
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) {
+            has_error = true;
+        }
+    }
+
+    if (has_error) {
+        delete[] result_vectors;
+        return expected<DataSetPtr>::Err(Status::invalid_argument, "Failed to get one or more vectors");
+    }
+
+    // Create result dataset
+    auto results = std::make_shared<DataSet>();
+    results->SetRows(num_vectors);
+    results->SetDim(dim_);
+    results->SetTensor(result_vectors);
+
+    return expected<DataSetPtr>::Ok(results);
 }
 
 Status
 JVectorIndex::Serialize(BinarySet& binset) const {
-    // TODO: Implement serialization logic
+    // Check if index is initialized
+    if (!index_object_) {
+        LOG_ERROR_ << "Index not initialized";
+        return Status(Status::Code::Invalid, "Index not initialized");
+    }
+
+    // Check if index is empty
+    if (size_ == 0) {
+        LOG_ERROR_ << "Cannot serialize empty index";
+        return Status(Status::Code::Invalid, "Cannot serialize empty index");
+    }
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Get the serialize method from GraphIndex class
+    jmethodID serialize_method = env->GetMethodID(g_jni_cache.graph_index_class, "serialize", "()[B");
+    if (serialize_method == nullptr) {
+        LOG_ERROR_ << "Failed to get serialize method";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to get serialize method");
+    }
+
+    // Call serialize method
+    jbyteArray bytes = (jbyteArray)env->CallObjectMethod(index_object_, serialize_method);
+    if (bytes == nullptr) {
+        LOG_ERROR_ << "Failed to serialize index";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to serialize index");
+    }
+
+    // Copy serialized data
+    jsize length = env->GetArrayLength(bytes);
+    std::vector<uint8_t> data(length);
+    env->GetByteArrayRegion(bytes, 0, length, reinterpret_cast<jbyte*>(data.data()));
+    env->DeleteLocalRef(bytes);
+
+    auto status = jvector::CheckJavaException(env);
+    if (!status.ok()) return status;
+
+    // Add to binary set
+    binset.Append("JVectorIndex", data);
+
     return Status::OK();
 }
 
 Status
 JVectorIndex::Deserialize(const BinarySet& binset, const Json& json) {
-    // TODO: Implement deserialization logic
+    // Validate JSON parameters
+    if (!json.contains("dim")) {
+        LOG_ERROR_ << "Missing dimension parameter";
+        return Status(Status::Code::Invalid, "Missing dimension parameter");
+    }
+
+    if (!json.contains("metric_type")) {
+        LOG_ERROR_ << "Missing metric_type parameter";
+        return Status(Status::Code::Invalid, "Missing metric_type parameter");
+    }
+
+    try {
+        int dim = json["dim"].get<int>();
+        std::string metric_type = json["metric_type"].get<std::string>();
+        
+        if (dim <= 0) {
+            LOG_ERROR_ << "Invalid dimension: " << dim;
+            return Status(Status::Code::Invalid, "Invalid dimension");
+        }
+
+        if (metric_type != "L2" && metric_type != "IP" && metric_type != "COSINE") {
+            LOG_ERROR_ << "Invalid metric type: " << metric_type;
+            return Status(Status::Code::Invalid, "Invalid metric type");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_ << "Invalid JSON parameter type: " << e.what();
+        return Status(Status::Code::Invalid, "Invalid JSON parameter type");
+    }
+    auto binary = binset.GetByName("JVectorIndex");
+    if (!binary) {
+        LOG_ERROR_ << "Failed to find JVectorIndex binary data";
+        return Status(Status::Code::Invalid, "Failed to find JVectorIndex binary data");
+    }
+
+    // Initialize JVM and create index
+    auto status = InitJVM();
+    if (!status.ok()) return status;
+
+    status = CreateJVectorIndex(json);
+    if (!status.ok()) return status;
+
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Get the deserialize method from GraphIndex class
+    jmethodID deserialize_method = env->GetMethodID(g_jni_cache.graph_index_class, "deserialize", "([B)V");
+    if (deserialize_method == nullptr) {
+        LOG_ERROR_ << "Failed to get deserialize method";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to get deserialize method");
+    }
+
+    // Create byte array with serialized data
+    jbyteArray bytes = env->NewByteArray(binary->size);
+    if (bytes == nullptr) {
+        LOG_ERROR_ << "Failed to create byte array";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to create byte array");
+    }
+
+    env->SetByteArrayRegion(bytes, 0, binary->size, reinterpret_cast<const jbyte*>(binary->data.get()));
+
+    // Call deserialize method
+    env->CallVoidMethod(index_object_, deserialize_method, bytes);
+    env->DeleteLocalRef(bytes);
+
+    auto status = jvector::CheckJavaException(env);
+    if (!status.ok()) return status;
+
+    // Update dimension and size from the deserialized index
+    jmethodID get_dim_method = env->GetMethodID(g_jni_cache.graph_index_class, "getDimension", "()I");
+    jmethodID get_size_method = env->GetMethodID(g_jni_cache.graph_index_class, "size", "()J");
+
+    if (get_dim_method == nullptr || get_size_method == nullptr) {
+        LOG_ERROR_ << "Failed to get dimension/size methods";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to get dimension/size methods");
+    }
+
+    dim_ = env->CallIntMethod(index_object_, get_dim_method);
+    size_ = env->CallLongMethod(index_object_, get_size_method);
+
     return Status::OK();
 }
 
 Status
 JVectorIndex::DeserializeFromFile(const std::string& filename, const Json& json) {
-    // TODO: Implement file deserialization logic
+    // Check if file exists and is readable
+    std::ifstream file(filename);
+    if (!file.good()) {
+        LOG_ERROR_ << "File does not exist or is not readable: " << filename;
+        return Status(Status::Code::Invalid, "File does not exist or is not readable");
+    }
+    file.close();
+
+    // Validate JSON parameters
+    if (!json.contains("dim")) {
+        LOG_ERROR_ << "Missing dimension parameter";
+        return Status(Status::Code::Invalid, "Missing dimension parameter");
+    }
+
+    if (!json.contains("metric_type")) {
+        LOG_ERROR_ << "Missing metric_type parameter";
+        return Status(Status::Code::Invalid, "Missing metric_type parameter");
+    }
+
+    try {
+        int dim = json["dim"].get<int>();
+        std::string metric_type = json["metric_type"].get<std::string>();
+        
+        if (dim <= 0) {
+            LOG_ERROR_ << "Invalid dimension: " << dim;
+            return Status(Status::Code::Invalid, "Invalid dimension");
+        }
+
+        if (metric_type != "L2" && metric_type != "IP" && metric_type != "COSINE") {
+            LOG_ERROR_ << "Invalid metric type: " << metric_type;
+            return Status(Status::Code::Invalid, "Invalid metric type");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_ << "Invalid JSON parameter type: " << e.what();
+        return Status(Status::Code::Invalid, "Invalid JSON parameter type");
+    }
+    // Initialize JVM and create index
+    auto status = InitJVM();
+    if (!status.ok()) return status;
+
+    status = CreateJVectorIndex(json);
+    if (!status.ok()) return status;
+
+    JNIEnv* env;
+    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
+        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    }
+
+    // Get the deserializeFromFile method
+    jmethodID deserialize_file_method = env->GetMethodID(g_jni_cache.graph_index_class, "deserializeFromFile", "(Ljava/lang/String;)V");
+    if (deserialize_file_method == nullptr) {
+        LOG_ERROR_ << "Failed to get deserializeFromFile method";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to get deserializeFromFile method");
+    }
+
+    // Convert filename to Java string
+    jstring j_filename = env->NewStringUTF(filename.c_str());
+    if (j_filename == nullptr) {
+        LOG_ERROR_ << "Failed to create Java string from filename";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to create Java string from filename");
+    }
+
+    // Call deserializeFromFile method
+    env->CallVoidMethod(index_object_, deserialize_file_method, j_filename);
+    env->DeleteLocalRef(j_filename);
+
+    auto status = jvector::CheckJavaException(env);
+    if (!status.ok()) return status;
+
+    // Update dimension and size from the deserialized index
+    jmethodID get_dim_method = env->GetMethodID(g_jni_cache.graph_index_class, "getDimension", "()I");
+    jmethodID get_size_method = env->GetMethodID(g_jni_cache.graph_index_class, "size", "()J");
+
+    if (get_dim_method == nullptr || get_size_method == nullptr) {
+        LOG_ERROR_ << "Failed to get dimension/size methods";
+        auto status = jvector::CheckJavaException(env);
+        if (!status.ok()) return status;
+        return Status(Status::Code::Invalid, "Failed to get dimension/size methods");
+    }
+
+    dim_ = env->CallIntMethod(index_object_, get_dim_method);
+    size_ = env->CallLongMethod(index_object_, get_size_method);
+
     return Status::OK();
 }
 
@@ -415,8 +734,9 @@ JVectorIndex::CreateJVectorIndex(const Json& config) {
     }
 
     JNIEnv* env;
-    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
-        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    auto status = EnsureThreadLocalJNIEnv(jvm_, &env);
+    if (!status.ok()) {
+        return status;
     }
 
     // Get dimension from config
@@ -443,8 +763,9 @@ JVectorIndex::DestroyJVectorIndex() {
     }
 
     JNIEnv* env;
-    if (jvm_->GetEnv((void**)&env, JNI_VERSION_1_8) != JNI_OK) {
-        return Status(Status::Code::Invalid, "Failed to get JNI environment");
+    auto status = EnsureThreadLocalJNIEnv(jvm_, &env);
+    if (!status.ok()) {
+        return status;
     }
 
     if (index_object_ != nullptr) {

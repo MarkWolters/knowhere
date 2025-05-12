@@ -7,6 +7,9 @@
 namespace knowhere {
 namespace jvector {
 
+// Initialize thread-local environment
+thread_local ThreadLocalJNIEnv g_thread_local_env;
+
 namespace {
 // JNI class and method signatures
 constexpr const char* kArrayVectorFloatClass = "io/github/jbellis/jvector/vector/ArrayVectorFloat";
@@ -48,6 +51,64 @@ struct JNICache {
 JNICache g_jni_cache;
 
 } // namespace
+
+Status GetThreadLocalJNIEnv(JavaVM* jvm, JNIEnv** env) {
+    if (jvm == nullptr) {
+        LOG_ERROR_ << "JVM not initialized";
+        return Status(Status::Code::Invalid, "JVM not initialized");
+    }
+
+    // Check if already attached
+    if (g_thread_local_env.env != nullptr) {
+        *env = g_thread_local_env.env;
+        return Status::OK();
+    }
+
+    // Attach thread to JVM
+    jint res = jvm->AttachCurrentThread((void**)&g_thread_local_env.env, nullptr);
+    if (res != JNI_OK) {
+        LOG_ERROR_ << "Failed to attach thread to JVM";
+        return Status(Status::Code::Invalid, "Failed to attach thread to JVM");
+    }
+
+    g_thread_local_env.attached = true;
+    *env = g_thread_local_env.env;
+    return Status::OK();
+}
+
+Status DetachThreadLocalJNIEnv(JavaVM* jvm) {
+    if (jvm == nullptr) {
+        return Status::OK();  // Nothing to detach from
+    }
+
+    if (g_thread_local_env.attached) {
+        jint res = jvm->DetachCurrentThread();
+        if (res != JNI_OK) {
+            LOG_ERROR_ << "Failed to detach thread from JVM";
+            return Status(Status::Code::Invalid, "Failed to detach thread from JVM");
+        }
+        g_thread_local_env.env = nullptr;
+        g_thread_local_env.attached = false;
+    }
+
+    return Status::OK();
+}
+
+Status EnsureThreadLocalJNIEnv(JavaVM* jvm, JNIEnv** env) {
+    if (jvm == nullptr) {
+        LOG_ERROR_ << "JVM not initialized";
+        return Status(Status::Code::Invalid, "JVM not initialized");
+    }
+
+    // Try to get existing env
+    jint res = jvm->GetEnv((void**)env, JNI_VERSION_1_8);
+    if (res == JNI_OK) {
+        return Status::OK();
+    }
+
+    // If not found, attach thread
+    return GetThreadLocalJNIEnv(jvm, env);
+}
 
 Status InitializeJVM(JavaVM** jvm) {
     if (*jvm != nullptr) {
@@ -364,24 +425,55 @@ Status CheckJavaException(JNIEnv* env) {
     return Status::OK();
 }
 
+Status CheckJavaException(JNIEnv* env) {
+    if (env->ExceptionCheck()) {
+        jthrowable exception = env->ExceptionOccurred();
+        jclass throwable_class = env->GetObjectClass(exception);
+        jmethodID getMessage = env->GetMethodID(throwable_class, "getMessage", "()Ljava/lang/String;");
+        
+        jstring message = (jstring)env->CallObjectMethod(exception, getMessage);
+        const char* error_message = env->GetStringUTFChars(message, nullptr);
+        
+        LOG_ERROR_ << "JNI error occurred: " << error_message;
+        
+        env->ReleaseStringUTFChars(message, error_message);
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        
+        return Status(Status::Code::Invalid, "JNI error occurred");
+    }
+    return Status::OK();
+}
+
 Status RangeSearchVectors(JNIEnv* env, jobject index_obj, const float* query_vectors, int64_t num_queries,
                        float radius, std::vector<std::vector<float>>& distances,
                        std::vector<std::vector<int64_t>>& labels, int ef_search, const BitsetView& bitset) {
     if (query_vectors == nullptr || num_queries <= 0) {
+        LOG_ERROR_ << "Invalid query vectors: query_vectors=" << (void*)query_vectors << ", num_queries=" << num_queries;
         return Status(Status::Code::Invalid, "Invalid query vectors");
     }
 
+    if (bitset.data() == nullptr) {
+        LOG_ERROR_ << "Invalid bitset data";
+        return Status(Status::Code::Invalid, "Invalid bitset data");
+    }
+
     if (radius <= 0) {
+        LOG_ERROR_ << "Invalid radius: " << radius;
         return Status(Status::Code::Invalid, "Invalid radius");
     }
 
     if (ef_search <= 0) {
+        LOG_ERROR_ << "Invalid ef_search: " << ef_search;
         return Status(Status::Code::Invalid, "Invalid ef_search");
     }
 
     // Create query vector array
     jfloatArray query_array = env->NewFloatArray(num_queries);
     if (query_array == nullptr) {
+        LOG_ERROR_ << "Failed to create query vector array of size " << num_queries;
+        auto status = CheckJavaException(env);
+        if (!status.ok()) return status;
         return Status(Status::Code::Invalid, "Failed to create query vector array");
     }
     env->SetFloatArrayRegion(query_array, 0, num_queries, query_vectors);
@@ -392,6 +484,9 @@ Status RangeSearchVectors(JNIEnv* env, jobject index_obj, const float* query_vec
                                         query_array);
     if (query_vector == nullptr) {
         env->DeleteLocalRef(query_array);
+        LOG_ERROR_ << "Failed to create query vector object";
+        auto status = CheckJavaException(env);
+        if (!status.ok()) return status;
         return Status(Status::Code::Invalid, "Failed to create query vector object");
     }
 
@@ -405,6 +500,9 @@ Status RangeSearchVectors(JNIEnv* env, jobject index_obj, const float* query_vec
     if (range_result == nullptr) {
         env->DeleteLocalRef(query_array);
         env->DeleteLocalRef(query_vector);
+        LOG_ERROR_ << "Failed to execute range search";
+        auto status = CheckJavaException(env);
+        if (!status.ok()) return status;
         return Status(Status::Code::Invalid, "Failed to execute range search");
     }
 

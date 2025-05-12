@@ -6,8 +6,21 @@
 namespace knowhere {
 namespace jvector {
 
+// Thread-local JNI environment
+struct ThreadLocalJNIEnv {
+    JNIEnv* env;
+    bool attached;
+
+    ThreadLocalJNIEnv() : env(nullptr), attached(false) {}
+};
+
+extern thread_local ThreadLocalJNIEnv g_thread_local_env;
+
 // JNI utility functions
 Status InitializeJVM(JavaVM** jvm);
+Status GetThreadLocalJNIEnv(JavaVM* jvm, JNIEnv** env);
+Status DetachThreadLocalJNIEnv(JavaVM* jvm);
+Status EnsureThreadLocalJNIEnv(JavaVM* jvm, JNIEnv** env);
 Status LoadJVectorClasses(JNIEnv* env);
 
 // JNI wrapper functions for JVector operations
