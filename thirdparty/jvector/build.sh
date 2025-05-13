@@ -101,20 +101,203 @@ build_folly_from_source() {
     rm -rf "$build_dir"
 }
 
+# Build prometheus-cpp from source
+build_prometheus() {
+    print_status "Building prometheus-cpp from source..."
+    local build_dir="$(mktemp -d)"
+    trap 'rm -rf "$build_dir"' EXIT
+
+    # Clone prometheus-cpp
+    cd "$build_dir"
+    git clone --recursive https://github.com/jupp0r/prometheus-cpp.git
+    cd prometheus-cpp
+
+    # Create build directory
+    mkdir -p _build
+    cd _build
+
+    # Configure and build
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DENABLE_PUSH=OFF \
+        -DENABLE_COMPRESSION=OFF
+
+    # Build and install
+    make -j$(nproc)
+    make install
+    ldconfig
+
+    print_status "prometheus-cpp installed successfully"
+}
+
+# Build GTest from source
+build_gtest() {
+    print_status "Building GTest from source..."
+    local orig_dir="$PWD"
+    local build_dir="$(mktemp -d)"
+    trap 'rm -rf "$build_dir"; cd "$orig_dir"' EXIT
+
+    # Clone GTest
+    cd "$build_dir" || {
+        print_error "Failed to change to build directory"
+        return 1
+    }
+
+    print_status "Cloning GTest..."
+    git clone --depth 1 https://github.com/google/googletest.git || {
+        print_error "Failed to clone GTest"
+        return 1
+    }
+
+    cd googletest || {
+        print_error "Failed to change to googletest directory"
+        return 1
+    }
+
+    # Create build directory
+    mkdir -p _build
+    cd _build || {
+        print_error "Failed to change to build directory"
+        return 1
+    }
+
+    # Configure and build
+    print_status "Configuring GTest..."
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON || {
+        print_error "Failed to configure GTest"
+        return 1
+    }
+
+    # Build and install
+    print_status "Building GTest..."
+    make -j$(nproc) VERBOSE=1 || {
+        print_error "Failed to build GTest"
+        return 1
+    }
+
+    print_status "Installing GTest..."
+    make install || {
+        print_error "Failed to install GTest"
+        return 1
+    }
+
+    # Update library cache
+    ldconfig
+
+    # Debug: List installed files
+    print_status "Installed GTest files:"
+    find /usr/local -name "*gtest*" -type f
+
+    # Return to original directory
+    cd "$orig_dir"
+    print_status "GTest installed successfully"
+}
+
+# Verify GTest installation
+verify_gtest() {
+    local gtest_paths=(
+        "/usr/local/lib/cmake/GTest/GTestConfig.cmake"
+        "/usr/local/include/gtest/gtest.h"
+        "/usr/local/lib/libgtest.so"
+    )
+
+    local found=false
+    for path in "${gtest_paths[@]}"; do
+        if [ -f "$path" ]; then
+            print_status "Found GTest component: $path"
+            found=true
+        fi
+    done
+
+    if [ "$found" = false ]; then
+        print_warning "GTest not found or incomplete installation, building from source..."
+        build_gtest || {
+            print_error "Failed to build GTest"
+            exit 1
+        }
+
+        # Verify installation was successful
+        local missing_files=false
+        for path in "${gtest_paths[@]}"; do
+            if [ ! -f "$path" ]; then
+                print_error "Missing GTest component after installation: $path"
+                missing_files=true
+            fi
+        done
+
+        if [ "$missing_files" = true ]; then
+            print_error "GTest installation verification failed"
+            exit 1
+        fi
+
+        print_status "GTest installation verified successfully"
+    fi
+}
+
+# Build opentelemetry-cpp from source
+build_opentelemetry() {
+    print_status "Building opentelemetry-cpp from source..."
+    local build_dir="$(mktemp -d)"
+    trap 'rm -rf "$build_dir"' EXIT
+
+    # Clone opentelemetry-cpp
+    cd "$build_dir"
+    git clone --recursive https://github.com/open-telemetry/opentelemetry-cpp.git
+    cd opentelemetry-cpp
+
+    # Create build directory
+    mkdir -p _build
+    cd _build
+
+    # Configure and build
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DWITH_OTLP=OFF \
+        -DWITH_EXAMPLES=OFF \
+        -DWITH_METRICS_PREVIEW=ON
+
+    # Build and install
+    make -j$(nproc)
+    make install
+    ldconfig
+
+    print_status "opentelemetry-cpp installed successfully"
+}
+
+# Verify prometheus-cpp installation
+verify_prometheus() {
+    if [ -f "/usr/local/lib/cmake/prometheus-cpp/prometheus-cpp-config.cmake" ]; then
+        print_status "Found prometheus-cpp"
+    else
+        print_warning "prometheus-cpp not found, building from source..."
+        build_prometheus
+    fi
+}
+
+# Verify opentelemetry-cpp installation
+verify_opentelemetry() {
+    if [ -f "/usr/local/lib/cmake/opentelemetry-cpp/opentelemetry-cpp-config.cmake" ]; then
+        print_status "Found opentelemetry-cpp"
+    else
+        print_warning "opentelemetry-cpp not found, building from source..."
+        build_opentelemetry
+    fi
+}
+
+# Verify Folly installation
 verify_folly() {
-    if ! pkg-config --exists libfolly; then
-        print_warning "Folly package not found, attempting to build from source..."
-        if [ "$EUID" -ne 0 ]; then
-            print_error "Please run with sudo to build Folly from source"
-            exit 1
-        fi
+    if pkg-config --exists libfolly; then
+        local folly_version=$(pkg-config --modversion libfolly)
+        print_status "Found Folly: $folly_version"
+    else
+        print_warning "Folly not found, building from source..."
         build_folly_from_source
-        
-        # Verify again
-        if ! pkg-config --exists libfolly; then
-            print_error "Failed to build and install Folly"
-            exit 1
-        fi
     fi
     print_status "Found Folly: $(pkg-config --modversion libfolly)"
 }
@@ -153,7 +336,9 @@ install_build_deps() {
         git \
         ca-certificates \
         curl \
-        wget
+        wget \
+        nlohmann-json3-dev \
+        libgtest-dev
 }
 
 check_system_deps() {
@@ -224,78 +409,56 @@ build() {
     print_status "Build type: $build_type"
     print_status "Using $jobs parallel jobs"
 
-    # Debug: Print initial directory
-    print_status "Current directory: $(pwd)"
-    print_status "Script location: $0"
-
-    # Get absolute path of the script
-    local script_path="$0"
-    if [[ "$script_path" != /* ]]; then
-        script_path="$(pwd)/$script_path"
-    fi
-    
-    # Get directory paths
-    local script_dir="$(cd "$(dirname "$script_path")" && pwd)"
-    if [ $? -ne 0 ]; then
-        print_error "Failed to resolve script directory"
-        exit 1
-    fi
-
-    # Store current directory
+    # Get absolute paths
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local knowhere_root="$(cd "$script_dir/../.." && pwd)"
     local current_dir="$(pwd)"
 
-    # Resolve knowhere root
-    cd "$script_dir" || exit 1
-    cd "../.." || exit 1
-    local knowhere_root="$(pwd)"
-    cd "$current_dir" || exit 1
+    # Store original directory
+    local orig_dir="$PWD"
+    trap 'cd "$orig_dir"' EXIT
 
-    # Debug: Print resolved paths
-    print_status "Script path: $script_path"
-    print_status "Script directory: $script_dir"
-    print_status "Current directory: $current_dir"
-    
+    # Debug: Print paths
     print_status "Script directory: $script_dir"
     print_status "Knowhere root: $knowhere_root"
+    print_status "Current directory: $current_dir"
 
-    # First build Knowhere
-    print_status "Building Knowhere..."
+    # Build Knowhere first
     cd "$knowhere_root"
     mkdir -p build
     cd build
-    
+    print_status "Building Knowhere in $(pwd)..."
+
     # Configure Knowhere
     cmake .. \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DMILVUS_USE_JVECTOR=ON \
         -DKNOWHERE_BUILD_TESTS=ON
+
     # Build Knowhere
     make -j$jobs
-    
+
     # Now build JVector
-    print_status "Building JVector..."
     cd "$script_dir"
     mkdir -p build
     cd build
-    
+    print_status "Building JVector in $(pwd)..."
+
     # Configure JVector
     cmake .. \
         -DCMAKE_BUILD_TYPE=$build_type \
         -DKNOWHERE_ROOT="$knowhere_root" \
         -DKNOWHERE_BUILD_TESTS=ON
-    
+
     # Build JVector
     make -j$jobs
-    
+
     # Run tests if enabled
     if [ "$KNOWHERE_BUILD_TESTS" = "ON" ]; then
         print_status "Running tests..."
         ctest --output-on-failure
     fi
-    
-    # Return to original directory
-    cd "$current_dir"
-    
+
     print_status "Build completed successfully!"
 }
 
@@ -304,11 +467,18 @@ main() {
     echo "=== JVector Build Script ==="
     echo "Checking prerequisites..."
 
-    # Store original environment variables
-    local orig_pwd="$PWD"
+    # Store original directory and environment
+    local script_dir="$(cd "$(dirname "$0")" && pwd)"
+    local orig_dir="$PWD"
     local orig_path="$PATH"
     local orig_java_home="$JAVA_HOME"
     local orig_ld_library_path="$LD_LIBRARY_PATH"
+
+    # Always return to original directory on exit
+    trap 'cd "$orig_dir"' EXIT
+
+    # Change to script directory
+    cd "$script_dir"
 
     # Check required tools
     check_command "java"
@@ -326,6 +496,15 @@ main() {
     # Verify Folly installation
     verify_folly
     
+    # Verify prometheus-cpp installation
+    verify_prometheus
+    
+    # Verify opentelemetry-cpp installation
+    verify_opentelemetry
+    
+    # Verify GTest installation
+    verify_gtest
+    
     # Check environment
     check_env
     
@@ -333,7 +512,8 @@ main() {
     setup_env
     
     # Debug: Print environment
-    print_status "PWD: $PWD"
+    print_status "Script directory: $script_dir"
+    print_status "Current directory: $PWD"
     print_status "PATH: $PATH"
     print_status "JAVA_HOME: $JAVA_HOME"
     print_status "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
@@ -345,8 +525,7 @@ main() {
     sudo -E PATH="$orig_path" \
          JAVA_HOME="$orig_java_home" \
          LD_LIBRARY_PATH="$orig_ld_library_path" \
-         PWD="$orig_pwd" \
-         "$0" --build "$@"
+         "$script_dir/build.sh" --build -t "$BUILD_TYPE" -j "$JOBS"
 }
 
 # Print help message
