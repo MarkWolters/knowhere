@@ -12,7 +12,13 @@
 # License for the specific language governing permissions and limitations under
 # the License
 
-cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.20)
+
+# Disable tests and benchmarks
+option(BUILD_TESTING "Build tests" OFF)
+option(WITH_BENCHMARK "Build benchmarks" OFF)
+option(WITH_TESTS "Build tests" OFF)
+
 project(knowhere CXX C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
