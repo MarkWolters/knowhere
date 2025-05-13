@@ -1,23 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(knowhere_jvector)
 
-# Add Google Benchmark
-include(FetchContent)
-FetchContent_Declare(
-    benchmark
-    GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG v1.8.3
-)
-set(BENCHMARK_ENABLE_TESTING OFF)
-set(BENCHMARK_ENABLE_GTEST_TESTS OFF)
-set(BENCHMARK_ENABLE_INSTALL ON)
-FetchContent_MakeAvailable(benchmark)
-
-# Export benchmark target
-if(NOT TARGET benchmark::benchmark)
-    add_library(benchmark::benchmark ALIAS benchmark)
-endif()
-
 # Download JVector JAR if not exists
 set(JVECTOR_VERSION "1.0.0")
 set(JVECTOR_JAR_NAME "jvector-${JVECTOR_VERSION}.jar")

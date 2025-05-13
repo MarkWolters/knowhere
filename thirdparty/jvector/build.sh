@@ -338,7 +338,8 @@ install_build_deps() {
         curl \
         wget \
         nlohmann-json3-dev \
-        libgtest-dev
+        libgtest-dev \
+        libbenchmark-dev
 }
 
 check_system_deps() {
