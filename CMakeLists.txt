@@ -110,7 +110,10 @@ if(NOT WITH_CUVS)
   find_package(fmt REQUIRED)
 endif()
 if(NOT WITH_LIGHT)
+knowhere_option(WITH_OPENTELEMETRY "Build with OpenTelemetry support" OFF)
+if(WITH_OPENTELEMETRY)
   find_package(opentelemetry-cpp REQUIRED)
+endif()
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
@@ -193,15 +196,17 @@ list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 if(NOT WITH_LIGHT)
-  list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
-  list(APPEND KNOWHERE_LINKER_LIBS
-       opentelemetry-cpp::opentelemetry_exporter_ostream_span)
-  list(APPEND KNOWHERE_LINKER_LIBS
-       opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
-  list(APPEND KNOWHERE_LINKER_LIBS
-       opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
-  list(APPEND KNOWHERE_LINKER_LIBS
-       opentelemetry-cpp::opentelemetry_exporter_otlp_http)
+  if(WITH_OPENTELEMETRY)
+    list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace
+         opentelemetry-cpp::opentelemetry_common
+         opentelemetry-cpp::opentelemetry_exporter_ostream_span
+         opentelemetry-cpp::opentelemetry_common
+         opentelemetry-cpp::opentelemetry_exporter_jaeger_trace
+         opentelemetry-cpp::opentelemetry_common
+         opentelemetry-cpp::opentelemetry_exporter_otlp_grpc
+         opentelemetry-cpp::opentelemetry_common
+         opentelemetry-cpp::opentelemetry_exporter_otlp_http)
+  endif()
 endif()
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})
