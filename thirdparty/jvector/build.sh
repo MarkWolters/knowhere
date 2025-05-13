@@ -263,7 +263,9 @@ build_opentelemetry() {
         -DBUILD_SHARED_LIBS=ON \
         -DWITH_OTLP=OFF \
         -DWITH_EXAMPLES=OFF \
-        -DWITH_METRICS_PREVIEW=ON
+        -DWITH_METRICS_PREVIEW=ON \
+        -DWITH_TESTS=OFF \
+        -DWITH_HTTP=OFF
 
     # Build and install
     make -j$(nproc)
