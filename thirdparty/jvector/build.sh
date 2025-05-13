@@ -168,7 +168,8 @@ build_gtest() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DBUILD_SHARED_LIBS=ON || {
+        -DCMAKE_CXX_STANDARD=17 \
+        -DBUILD_GMOCK=ON || {
         print_error "Failed to configure GTest"
         return 1
     }
@@ -204,6 +205,8 @@ verify_gtest() {
         "/usr/local/lib/cmake/GTest/GTestConfig.cmake"
         "/usr/local/include/gtest/gtest.h"
         "/usr/local/lib/libgtest.so"
+        "/usr/local/include/gmock/gmock.h"
+        "/usr/local/lib/libgmock.so"
     )
 
     local found=false
@@ -339,6 +342,7 @@ install_build_deps() {
         wget \
         nlohmann-json3-dev \
         libgtest-dev \
+        google-mock \
         libbenchmark-dev
 }
 
