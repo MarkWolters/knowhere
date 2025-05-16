@@ -12,28 +12,9 @@
 # License for the specific language governing permissions and limitations under
 # the License
 
-cmake_minimum_required(VERSION 3.20)
-
-# Disable tests and benchmarks
-option(BUILD_TESTING "Build tests" OFF)
-option(WITH_BENCHMARK "Build benchmarks" OFF)
-option(WITH_TESTS "Build tests" OFF)
-
+cmake_minimum_required(VERSION 3.26.4 FATAL_ERROR)
 project(knowhere CXX C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Disable all optional features
-set(WITH_CUVS OFF)
-set(WITH_UT OFF)
-set(WITH_ASAN OFF)
-set(WITH_DISKANN OFF)
-set(WITH_LIGHT OFF)
-set(WITH_CCACHE OFF)
-set(WITH_PROMETHEUS OFF)
-set(WITH_OPENTELEMETRY OFF)
-set(BUILD_TESTING OFF)
-set(WITH_BENCHMARK OFF)
-set(WITH_TESTS OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/")
 include(GNUInstallDirs)
 include(ExternalProject)
@@ -118,18 +99,12 @@ include_directories(${folly_INCLUDE_DIRS})
 
 find_package(nlohmann_json REQUIRED)
 find_package(glog REQUIRED)
-knowhere_option(WITH_PROMETHEUS "Build with Prometheus support" OFF)
-if(WITH_PROMETHEUS)
-  find_package(prometheus-cpp REQUIRED)
-endif()
+find_package(prometheus-cpp REQUIRED)
 if(NOT WITH_CUVS)
   find_package(fmt REQUIRED)
 endif()
 if(NOT WITH_LIGHT)
-knowhere_option(WITH_OPENTELEMETRY "Build with OpenTelemetry support" OFF)
-if(WITH_OPENTELEMETRY)
   find_package(opentelemetry-cpp REQUIRED)
-endif()
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET
@@ -208,23 +183,19 @@ list(APPEND KNOWHERE_LINKER_LIBS Boost::boost)
 list(APPEND KNOWHERE_LINKER_LIBS faiss)
 list(APPEND KNOWHERE_LINKER_LIBS glog::glog)
 list(APPEND KNOWHERE_LINKER_LIBS nlohmann_json::nlohmann_json)
-if(WITH_PROMETHEUS)
-  list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
-endif()
+list(APPEND KNOWHERE_LINKER_LIBS prometheus-cpp::core prometheus-cpp::push)
 list(APPEND KNOWHERE_LINKER_LIBS fmt::fmt-header-only)
 list(APPEND KNOWHERE_LINKER_LIBS Folly::folly)
 if(NOT WITH_LIGHT)
-  if(WITH_OPENTELEMETRY)
-    list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace
-         opentelemetry-cpp::opentelemetry_common
-         opentelemetry-cpp::opentelemetry_exporter_ostream_span
-         opentelemetry-cpp::opentelemetry_common
-         opentelemetry-cpp::opentelemetry_exporter_jaeger_trace
-         opentelemetry-cpp::opentelemetry_common
-         opentelemetry-cpp::opentelemetry_exporter_otlp_grpc
-         opentelemetry-cpp::opentelemetry_common
-         opentelemetry-cpp::opentelemetry_exporter_otlp_http)
-  endif()
+  list(APPEND KNOWHERE_LINKER_LIBS opentelemetry-cpp::opentelemetry_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_ostream_span)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_jaeger_trace)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_grpc)
+  list(APPEND KNOWHERE_LINKER_LIBS
+       opentelemetry-cpp::opentelemetry_exporter_otlp_http)
 endif()
 
 add_library(knowhere SHARED ${KNOWHERE_SRCS})

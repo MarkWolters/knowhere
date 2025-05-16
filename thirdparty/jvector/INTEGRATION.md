@@ -1,47 +1,93 @@
-# JVector Integration Guide for Milvus
+# JVector Integration Guide for Knowhere
 
-This guide explains how to integrate the JVector plugin with Milvus for high-performance vector similarity search.
+This guide explains how to build and use the JVector plugin with Knowhere for high-performance vector similarity search.
 
 ## Prerequisites
 
-- Milvus 2.3.0 or higher
+- Python 3.7 or higher
 - JDK 21
-- CMake 3.18 or higher
-- C++17 compatible compiler
+- Conan 1.64.1 or higher
+- CMake 3.20 or higher
+- C++17 compatible compiler (GCC 9.4.0 or higher recommended)
 - Linux environment (recommended for production)
 
 ## Installation Steps
 
-### 1. Build Knowhere with JVector Support
+### 1. Set Up Python Virtual Environment
+
+```bash
+# Create and activate a Python virtual environment
+python -m venv knowhere_venv
+source knowhere_venv/bin/activate
+
+# Upgrade pip and install required Python packages
+pip install --upgrade pip
+pip install conan==1.64.1
+```
+
+### 2. Build Knowhere with JVector Support
 
 ```bash
 # Clone Knowhere repository if you haven't already
 git clone https://github.com/milvus-io/knowhere.git
 cd knowhere
 
-# Create build directory
-mkdir build && cd build
+# Checkout the jvector integration branch
+git checkout jvec2
 
-# Configure with JVector support
-cmake .. -DMILVUS_USE_JVECTOR=ON -DCMAKE_BUILD_TYPE=Release
+# Create build directory and navigate to it
+mkdir -p build && cd build
 
-# Build
-make -j$(nproc)
+# Install dependencies using Conan
+conan install .. --build=missing -o with_ut=True -s compiler.libcxx=libstdc++11 -s build_type=Debug
 
-# Install
-sudo make install
+# Build the project
+conan build ..
 ```
 
-### 2. Configure JVM Environment
+### 3. Set Up JVM Environment
 
-Add the following to your system environment or Milvus configuration:
+Add the following to your environment variables (e.g., in your `~/.bashrc` or `~/.zshrc`):
 
 ```bash
-export JAVA_HOME=/path/to/your/java/home
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64  # Update this path to your JDK installation
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${JAVA_HOME}/lib/server
 ```
 
-### 3. Configure Milvus
+## Using JVector in Knowhere
+
+### 1. Verify JVector Integration
+
+After building, you can verify that JVector is properly integrated by checking the built library:
+
+```bash
+# Check for JVector symbols in the built library
+nm -C Debug/libknowhere.so | grep -i jvec
+```
+
+You should see JVector-related symbols in the output, including:
+- `knowhere::indexparam::JVECTOR_EF_SEARCH`
+- `knowhere::indexparam::JVECTOR_BEAM_WIDTH`
+- `knowhere::indexparam::JVECTOR_QUEUE_SIZE`
+- `knowhere::indexparam::JVECTOR_EF_CONSTRUCTION`
+- `knowhere::indexparam::JVECTOR_M`
+- `knowhere::IndexEnum::INDEX_JVECTOR`
+
+### 2. Running Tests
+
+To run the test suite and verify JVector functionality:
+
+```bash
+# Navigate to the build directory if not already there
+cd build
+
+# Run the test executable
+./tests/ut/knowhere_tests --gtest_filter=*JVector*
+```
+
+## Integration with Milvus
+
+### 1. Configure Milvus
 
 Update your Milvus configuration to enable JVector:
 
@@ -55,9 +101,7 @@ knowhere:
     - "-XX:+UseG1GC"
 ```
 
-## Using JVector in Milvus
-
-### 1. Create Collection with JVector Index
+### 2. Create Collection with JVector Index
 
 ```python
 from pymilvus import Collection, FieldSchema, CollectionSchema, DataType, connections
