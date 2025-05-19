@@ -1,0 +1,23 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find dependencies
+find_dependency(Boost 1.65.0 COMPONENTS system filesystem)
+find_dependency(nlohmann_json 3.7.3)
+
+# Import targets
+include("${CMAKE_CURRENT_LIST_DIR}/knowhere_jvector-targets.cmake")
+
+# Add usage requirements
+get_target_property(KNOWHERE_JVECTOR_INCLUDE_DIRS knowhere::knowhere_jvector INTERFACE_INCLUDE_DIRECTORIES)
+set_and_check(KNOWHERE_JVECTOR_INCLUDE_DIRS "${KNOWHERE_JVECTOR_INCLUDE_DIRS}")
+
+# Add library directory
+get_target_property(KNOWHERE_JVECTOR_LIBRARY_DIRS knowhere::knowhere_jvector IMPORTED_LOCATION_RELEASE)
+get_filename_component(KNOWHERE_JVECTOR_LIBRARY_DIRS "${KNOWHERE_JVECTOR_LIBRARY_DIRS}" DIRECTORY)
+set_and_check(KNOWHERE_JVECTOR_LIBRARY_DIRS "${KNOWHERE_JVECTOR_LIBRARY_DIRS}")
+
+# Set variables for find_package
+set(KNOWHERE_JVECTOR_FOUND TRUE)
+set(KNOWHERE_JVECTOR_VERSION @PROJECT_VERSION@)

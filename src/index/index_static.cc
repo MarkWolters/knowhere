@@ -131,7 +131,7 @@ IndexStaticFaced<DataType>::HasRawData(const IndexType& indexType, const IndexVe
 
 template <typename DataType>
 bool
-IndexStaticFaced<DataType>::InternalStaticHasRawData(const BaseConfig& /*config*/, const IndexVersion& version) {
+IndexStaticFaced<DataType>::InternalStaticHasRawData(const BaseConfig& /*config*/, const IndexVersion& /*version*/) {
     return false;
 }
 

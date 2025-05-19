@@ -51,4 +51,5 @@ target_link_libraries(knowhere_tests PRIVATE
         Catch2::Catch2WithMain
         atomic
         stdc++fs
-        knowhere)
+        knowhere
+        knowhere_jvector)

@@ -1,11 +1,15 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/catch_approx.hpp"
+
 #include "knowhere/comp/index_param.h"
 #include "knowhere/comp/knowhere_config.h"
 #include "knowhere/dataset.h"
-#include "../include/jvector_index.h"
+#include "knowhere/expected.h"
+#include "knowhere/index/vector_index/helpers/IndexParameter.h"
+#include "knowhere/index/vector_index/jvector/jvector_index.h"
 
 using namespace knowhere;
+using namespace knowhere::jvector;
 using Catch::Approx;
 
 namespace {

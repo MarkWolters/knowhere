@@ -1,27 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
-project(knowhere_jvector)
+project(knowhere_jvector VERSION 1.0.0 LANGUAGES CXX)
 
-# Download JVector JAR if not exists
-set(JVECTOR_VERSION "1.0.0")
-set(JVECTOR_JAR_NAME "jvector-${JVECTOR_VERSION}.jar")
-set(JVECTOR_JAR_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/${JVECTOR_JAR_NAME}")
-
-if(NOT EXISTS ${JVECTOR_JAR_PATH})
-    message(STATUS "Downloading JVector JAR...")
-    file(DOWNLOAD
-        "https://github.com/jbellis/jvector/releases/download/v${JVECTOR_VERSION}/${JVECTOR_JAR_NAME}"
-        ${JVECTOR_JAR_PATH}
-        SHOW_PROGRESS
-    )
+# Find Boost (without components)
+find_package(Boost 1.74.0 REQUIRED)
+if(Boost_FOUND)
+    message(STATUS "Found Boost: ${Boost_INCLUDE_DIRS}")
+    include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 endif()
 
-# Find Boost
-set(Boost_USE_STATIC_LIBS OFF)
-set(Boost_USE_MULTITHREADED ON)
-set(Boost_USE_STATIC_RUNTIME OFF)
-find_package(Boost 1.65.0 REQUIRED COMPONENTS system filesystem)
+# Create interface target for nlohmann_json (header-only)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+    add_library(nlohmann_json INTERFACE IMPORTED)
+    target_include_directories(nlohmann_json INTERFACE "/usr/include")
+    target_link_libraries(nlohmann_json INTERFACE "-lnlohmann_json")
+    add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
+endif()
 
-# Find Java 21
+# Find Java with Panama support
 find_package(Java 21 REQUIRED)
 include(UseJava)
 
@@ -37,39 +32,48 @@ if(NOT DEFINED ENV{JAVA_HOME})
         OUTPUT_VARIABLE JAVA_EXECUTABLE
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-    get_filename_component(JAVA_BIN ${JAVA_EXECUTABLE} DIRECTORY)
-    get_filename_component(JAVA_HOME ${JAVA_BIN} DIRECTORY)
+    execute_process(
+        COMMAND readlink -f ${JAVA_EXECUTABLE}
+        OUTPUT_VARIABLE JAVA_EXECUTABLE_REAL
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    get_filename_component(JAVA_BIN_DIR ${JAVA_EXECUTABLE_REAL} DIRECTORY)
+    get_filename_component(JAVA_HOME ${JAVA_BIN_DIR}/.. ABSOLUTE)
     set(ENV{JAVA_HOME} ${JAVA_HOME})
+    message(STATUS "Setting JAVA_HOME to ${JAVA_HOME}")
 endif()
 
-# Find JNI without requiring AWT
-set(JAVA_AWT_LIBRARY NotNeeded)
-set(JAVA_JVM_LIBRARY NotNeeded)
-find_package(JNI REQUIRED COMPONENTS JVM)
+# Get Java home
+set(JAVA_HOME $ENV{JAVA_HOME})
+message(STATUS "Found Java home: ${JAVA_HOME}")
 
-# Explicitly find the JNI headers if not found
-if(NOT JNI_INCLUDE_DIRS)
-    if(DEFINED ENV{JAVA_HOME})
-        set(JNI_INCLUDE_DIRS
-            $ENV{JAVA_HOME}/include
-            $ENV{JAVA_HOME}/include/linux
-        )
-    endif()
-endif()
+# Find JNI
+find_package(JNI REQUIRED)
 
-if(NOT JNI_FOUND)
-    message(FATAL_ERROR "JNI not found. Please ensure JAVA_HOME is set correctly.")
-endif()
+# Set JNI include directories
+set(JNI_INCLUDE_DIRS
+    ${JAVA_HOME}/include
+    ${JAVA_HOME}/include/linux
+    ${JAVA_HOME}/include/jdk.incubator.foreign
+)
+message(STATUS "JNI include dirs: ${JNI_INCLUDE_DIRS}")
 
-# Add JNI include directories
-include_directories(
-    ${JNI_INCLUDE_DIRS}
-    ${JAVA_INCLUDE_PATH}
-    ${JAVA_INCLUDE_PATH2}
+# Find JVM library
+find_library(JAVA_JVM_LIBRARY
+    NAMES jvm
+    PATHS ${JAVA_HOME}/lib/server
+          ${JAVA_HOME}/lib/amd64/server
+          ${JAVA_HOME}/jre/lib/amd64/server
+    NO_DEFAULT_PATH
 )
 
-message(STATUS "Found JNI: ${JNI_INCLUDE_DIRS}")
-
+# Set JNI libraries
+if(JAVA_JVM_LIBRARY)
+    message(STATUS "JVM library: ${JAVA_JVM_LIBRARY}")
+    set(JNI_LIBRARIES ${JAVA_JVM_LIBRARY})
+else()
+    message(WARNING "JVM library not found, JNI might not work properly")
+endif()
 
 # Set source files
 set(JVECTOR_SRC
@@ -77,71 +81,85 @@ set(JVECTOR_SRC
     src/jvector_jni.cpp
 )
 
-# Create library
+# Add JNI and Panama includes
+include_directories(SYSTEM ${JNI_INCLUDE_DIRS})
+
+# Add compiler definitions for Panama
+add_definitions(-DPANAMA)
+
+# Add link options for the JNI library
+add_link_options(-Wl,--enable-new-dtags,-rpath,'$ORIGIN/../lib')
+
+# Create the library with C++17 standard
 add_library(knowhere_jvector STATIC ${JVECTOR_SRC})
+add_library(knowhere::jvector ALIAS knowhere_jvector)
 
-# Define JVector path
-set(KNOWHERE_JVECTOR_PATH ${CMAKE_CURRENT_SOURCE_DIR})
-
-# Get Knowhere root directory
-get_filename_component(KNOWHERE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../ ABSOLUTE)
-
-# Include directories
-target_include_directories(knowhere_jvector
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${KNOWHERE_ROOT}/include
-        ${KNOWHERE_ROOT}/src
+target_compile_options(knowhere_jvector PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++17>
 )
 
-# Add shared library
-add_library(jvector SHARED
-    src/jvector_index.cpp
-    src/jvector_jni.cpp
-)
-
-target_include_directories(jvector PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${JNI_INCLUDE_DIRS}
-    ${KNOWHERE_ROOT}/include
-    ${KNOWHERE_ROOT}/src
-)
-
-target_link_libraries(jvector PUBLIC
-    ${JNI_LIBRARIES}
-    knowhere
-)
-
-# Add test executable
-if(KNOWHERE_BUILD_TESTS)
-    add_executable(test_jvector
-        test/test_jvector_index.cpp
-    )
-
-    target_link_libraries(test_jvector PRIVATE
-        jvector
-        catch2
-    )
-
-    add_test(NAME test_jvector COMMAND test_jvector)
-endif()
-
-# Add compile definitions
-target_compile_definitions(knowhere_jvector
-    PRIVATE
-        KNOWHERE_JVECTOR_PATH="${KNOWHERE_JVECTOR_PATH}"
-        JVECTOR_JAR_PATH="${JVECTOR_JAR_PATH}"
-)
-
-# Link with JNI
-target_link_libraries(knowhere_jvector
-    PUBLIC
-        ${JNI_LIBRARIES}
+target_compile_definitions(knowhere_jvector PRIVATE
+    $<$<CONFIG:Debug>:_DEBUG>
+    $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
 )
 
 # Set C++ standard
 set_target_properties(knowhere_jvector PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+
+# Download JVector JAR if not exists
+set(JVECTOR_VERSION "1.0.0")
+set(JVECTOR_JAR_NAME "jvector-${JVECTOR_VERSION}.jar")
+set(JVECTOR_JAR_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/${JVECTOR_JAR_NAME}")
+
+if(NOT EXISTS ${JVECTOR_JAR_PATH})
+    message(STATUS "Downloading JVector JAR...")
+    file(DOWNLOAD
+        "https://github.com/jbellis/jvector/releases/download/v${JVECTOR_VERSION}/${JVECTOR_JAR_NAME}"
+        ${JVECTOR_JAR_PATH}
+        SHOW_PROGRESS
+    )
+endif()
+
+# Get Knowhere root directory
+get_filename_component(KNOWHERE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../ ABSOLUTE)
+
+# Include directories
+target_include_directories(knowhere_jvector
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${KNOWHERE_ROOT}/include
+        ${KNOWHERE_ROOT}/src
+        ${JNI_INCLUDE_DIRS}
+        ${Boost_INCLUDE_DIRS}
+)
+
+# Link libraries
+target_link_libraries(knowhere_jvector
+    PRIVATE
+        ${JNI_LIBRARIES}
+        ${Boost_LIBRARIES}
+        nlohmann_json::nlohmann_json
+)
+
+# Install targets
+install(TARGETS knowhere_jvector
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)
+
+# Install JVector JAR
+install(FILES ${JVECTOR_JAR_PATH}
+    DESTINATION lib
+)
+
+# Install headers
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION include/knowhere/jvector
+    FILES_MATCHING PATTERN "*.h"
 )

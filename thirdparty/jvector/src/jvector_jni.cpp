@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <sstream>
 
 namespace knowhere {
 namespace jvector {
@@ -115,23 +116,41 @@ Status InitializeJVM(JavaVM** jvm) {
         return Status::OK();
     }
 
+    JNIEnv* env;
     JavaVMInitArgs vm_args;
-    JavaVMOption options[1];
     
-    // TODO: Set proper classpath to include JVector JAR
-    options[0].optionString = const_cast<char*>("-Djava.class.path=/path/to/jvector.jar");
+    // Set up JVM options with preview features
+    const char* jvm_options[] = {
+        "-Djava.class.path=.",
+        "--enable-preview",
+        "--enable-native-access=ALL-UNNAMED",
+        "--add-modules",
+        "jdk.incubator.foreign"
+    };
     
-    vm_args.version = JNI_VERSION_1_8;
-    vm_args.nOptions = 1;
+    const int num_options = sizeof(jvm_options) / sizeof(jvm_options[0]);
+    JavaVMOption* options = new JavaVMOption[num_options];
+    for (int i = 0; i < num_options; i++) {
+        options[i].optionString = const_cast<char*>(jvm_options[i]);
+    }
+
+    vm_args.version = JNI_VERSION_10;
+    vm_args.nOptions = num_options;
     vm_args.options = options;
     vm_args.ignoreUnrecognized = JNI_FALSE;
 
-    jint res = JNI_CreateJavaVM(jvm, (void**)&g_jni_env, &vm_args);
+    jint res = JNI_CreateJavaVM(jvm, (void**)&env, &vm_args);
+    
+    // Clean up options
+    delete[] options;
+    
     if (res != JNI_OK) {
-        return Status(Status::Code::Invalid, "Failed to create JVM");
+        std::stringstream ss;
+        ss << "Failed to create Java VM with error code: " << res;
+        return Status::JniError(ss.str());
     }
 
-    return LoadJVectorClasses(g_jni_env);
+    return LoadJVectorClasses(env);
 }
 
 Status LoadJVectorClasses(JNIEnv* env) {
