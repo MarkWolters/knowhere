@@ -14,8 +14,8 @@ bool initJVM() {
     JavaVMInitArgs vm_args;
     JavaVMOption options[3];
     
-    // Set class path to current directory
-    options[0].optionString = const_cast<char*>("-Djava.class.path=.");
+    // Set class path to include the JVector JAR
+    options[0].optionString = const_cast<char*>("-Djava.class.path=../thirdparty/jvector/lib/jvector-1.0.0.jar");
     
     // Disable JVM verification - useful for debugging
     options[1].optionString = const_cast<char*>("-Xverify:none");
@@ -35,6 +35,22 @@ bool initJVM() {
         std::cerr << "Failed to create JVM: " << res << std::endl;
         return false;
     }
+    
+    std::cout << "JVM initialized successfully!" << std::endl;
+    
+    // Verify JVector classes are available
+    jclass graphIndexBuilderClass = env->FindClass("com/datastax/jvector/graph/GraphIndexBuilder");
+    if (graphIndexBuilderClass == nullptr) {
+        std::cerr << "Failed to find GraphIndexBuilder class" << std::endl;
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        return false;
+    }
+    
+    std::cout << "Found GraphIndexBuilder class!" << std::endl;
+    env->DeleteLocalRef(graphIndexBuilderClass);
     
     return true;
 }
