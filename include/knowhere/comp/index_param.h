@@ -57,6 +57,8 @@ constexpr const char* INDEX_HNSW_PRQ = "HNSW_PRQ";
 
 constexpr const char* INDEX_DISKANN = "DISKANN";
 
+constexpr const char* INDEX_JVECTOR = "JVECTOR";
+
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX = "SPARSE_INVERTED_INDEX";
 constexpr const char* INDEX_SPARSE_WAND = "SPARSE_WAND";
 constexpr const char* INDEX_SPARSE_INVERTED_INDEX_CC = "SPARSE_INVERTED_INDEX_CC";
@@ -163,6 +165,13 @@ constexpr const char* EFCONSTRUCTION = "efConstruction";
 constexpr const char* HNSW_M = "M";
 constexpr const char* EF = "ef";
 constexpr const char* OVERVIEW_LEVELS = "overview_levels";
+
+// JVector Params
+constexpr const char* JVECTOR_M = "M";
+constexpr const char* JVECTOR_EF_CONSTRUCTION = "ef_construction";
+constexpr const char* JVECTOR_EF_SEARCH = "ef_search";
+constexpr const char* JVECTOR_BEAM_WIDTH = "beam_width";
+constexpr const char* JVECTOR_QUEUE_SIZE = "queue_size";
 
 // DISKANN Params
 constexpr const char* MAX_DEGREE = "max_degree";

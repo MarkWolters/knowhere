@@ -198,7 +198,11 @@ if(NOT WITH_LIGHT)
        opentelemetry-cpp::opentelemetry_exporter_otlp_http)
 endif()
 
-add_library(knowhere SHARED ${KNOWHERE_SRCS})
+add_library(knowhere SHARED ${KNOWHERE_SRCS}
+        thirdparty/jvector/include/jvector_index.h
+        thirdparty/jvector/include/jvector_jni.h
+        thirdparty/jvector/src/jvector_index.cpp
+        thirdparty/jvector/src/jvector_jni.cpp)
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_CUVS)
   list(
