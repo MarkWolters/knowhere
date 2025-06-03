@@ -198,11 +198,70 @@ if(NOT WITH_LIGHT)
        opentelemetry-cpp::opentelemetry_exporter_otlp_http)
 endif()
 
+# Find Java and JNI
+find_package(Java 21 REQUIRED)
+find_package(JNI REQUIRED)
+
+# Set default JAVA_HOME if not set
+if(NOT DEFINED ENV{JAVA_HOME})
+    execute_process(
+        COMMAND ${Java_JAVA_EXECUTABLE} -XshowSettings:properties -version 2>&1 | grep "java.home" | awk '{print $3}'
+        OUTPUT_VARIABLE JAVA_HOME
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    set(ENV{JAVA_HOME} ${JAVA_HOME})
+endif()
+
+# Set JNI include directories
+set(JNI_INCLUDE_DIRS
+    "$ENV{JAVA_HOME}/include"
+    "$ENV{JAVA_HOME}/include/linux"
+)
+
+# Try to find jni.h in common locations if not found in JAVA_HOME
+if(NOT EXISTS "$ENV{JAVA_HOME}/include/jni.h")
+    message(STATUS "jni.h not found in $ENV{JAVA_HOME}/include, searching in common locations...")
+    
+    # Common locations for JNI headers
+    set(COMMON_JNI_PATHS
+        "/usr/lib/jvm/default-java"
+        "/usr/lib/jvm/java"
+        "/usr/lib/jvm/java-21-openjdk-amd64"
+        "/usr/lib/jvm/java-21-oracle"
+        "/usr/java/latest"
+    )
+    
+    foreach(PATH ${COMMON_JNI_PATHS})
+        if(EXISTS "${PATH}/include/jni.h")
+            set(JNI_INCLUDE_DIRS
+                "${PATH}/include"
+                "${PATH}/include/linux"
+            )
+            set(JNI_FOUND TRUE)
+            message(STATUS "Found jni.h in ${PATH}/include")
+            break()
+        endif()
+    endforeach()
+    
+    if(NOT JNI_FOUND)
+        message(FATAL_ERROR "jni.h not found. Please set JAVA_HOME to point to your JDK installation.")
+    endif()
+endif()
+
+message(STATUS "Using JNI include dirs: ${JNI_INCLUDE_DIRS}")
+
+# Include JNI directories
+include_directories(SYSTEM ${JNI_INCLUDE_DIRS})
+
+# Create the knowhere library with JNI source files
 add_library(knowhere SHARED ${KNOWHERE_SRCS}
         thirdparty/jvector/include/jvector_index.h
         thirdparty/jvector/include/jvector_jni.h
         thirdparty/jvector/src/jvector_index.cpp
         thirdparty/jvector/src/jvector_jni.cpp)
+
+# Add JNI include directories to the target
+target_include_directories(knowhere PRIVATE ${JNI_INCLUDE_DIRS})
 add_dependencies(knowhere ${KNOWHERE_LINKER_LIBS})
 if(WITH_CUVS)
   list(
@@ -218,8 +277,28 @@ if(WITH_CUVS)
     CUDA::cusparse
     CUDA::cusolver)
 endif()
-target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS})
-target_include_directories(knowhere PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Find JVM library
+find_library(JAVA_JVM_LIBRARY
+    NAMES jvm
+    PATHS ${JAVA_HOME}/lib/server
+          ${JAVA_HOME}/lib/amd64/server
+          ${JAVA_HOME}/jre/lib/amd64/server
+    NO_DEFAULT_PATH
+)
+
+if(JAVA_JVM_LIBRARY)
+    message(STATUS "JVM library: ${JAVA_JVM_LIBRARY}")
+    list(APPEND KNOWHERE_LINKER_LIBS ${JAVA_JVM_LIBRARY})
+else()
+    message(WARNING "JVM library not found, JNI might not work properly")
+endif()
+
+target_link_libraries(knowhere PUBLIC ${KNOWHERE_LINKER_LIBS} ${JNI_LIBRARIES})
+target_include_directories(knowhere 
+    PUBLIC 
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${JNI_INCLUDE_DIRS}
+)
 
 if(WITH_UT)
   add_subdirectory(tests/ut)
